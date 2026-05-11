@@ -1,0 +1,64 @@
+#!/bin/bash
+# GeniePod — Jetson audio bring-up at boot.
+#
+# Configures the Tegra APE AHUB route for external I2S2 capture so the
+# external audio frontend (e.g. ESP32-LyraT V4.3 over the 40-pin header)
+# appears as `hw:APE,0` / `plughw:APE,0`.
+#
+# Invoked by genie-audio.service after sound.target. Safe to run manually
+# at any time. Idempotent — re-running has no negative effect.
+#
+# Prerequisites (not handled here):
+#   - Jetson-IO has applied the 40-pin I2S2 overlay (sudo jetson-io.py).
+#   - The external master is wired: SCLK→12, LRCK→35, DIN→38, GND→6.
+#
+# See doc/lyrat-jetson-audio.md for the full external bring-up.
+
+set -uo pipefail
+
+CARD="APE"
+LOG_TAG="genie-audio-init"
+
+log() { echo "[${LOG_TAG}] $*"; }
+warn() { echo "[${LOG_TAG}] WARN: $*" >&2; }
+
+# Wait for APE card to enumerate (up to 30 s). The card normally appears
+# during sound.target, but on slow boots or under heavy I/O it can lag.
+for _ in $(seq 1 30); do
+    if amixer -c "$CARD" controls 2>/dev/null | grep -q "I2S2 Mux"; then
+        break
+    fi
+    sleep 1
+done
+
+if ! amixer -c "$CARD" controls 2>/dev/null | grep -q "I2S2 Mux"; then
+    warn "card $CARD has no I2S2 controls — overlay not applied? skipping route setup."
+    exit 0
+fi
+
+# Configure the AHUB route and I2S2 framing for external-master capture
+# at 48 kHz / 16-bit / stereo (ALSA plughw layer will downmix / resample
+# to whatever the consumer asks for, including 16 kHz mono for Whisper).
+set_ctrl() {
+    local name="$1"
+    local value="$2"
+    if amixer -c "$CARD" cset name="$name" "$value" >/dev/null 2>&1; then
+        log "  $name = $value"
+    else
+        warn "  failed to set $name = $value (control may be absent on this kernel)"
+    fi
+}
+
+log "configuring ${CARD} I2S2 → ADMAIF1 capture route"
+set_ctrl "ADMAIF1 Mux"                       "I2S2"
+set_ctrl "I2S2 codec master mode"            "cbm-cfm"   # external master drives BCLK + LRCK
+set_ctrl "I2S2 codec frame mode"             "i2s"       # Philips I2S framing
+set_ctrl "I2S2 Sample Rate"                  "48000"
+set_ctrl "I2S2 Capture Audio Channels"       "2"
+set_ctrl "I2S2 Capture Audio Bit Format"     "16"
+set_ctrl "I2S2 Client Channels"              "2"
+set_ctrl "I2S2 Client Bit Format"            "16"
+set_ctrl "ADMAIF1 Capture Audio Channels"    "2"
+set_ctrl "ADMAIF1 Capture Client Channels"   "2"
+
+log "done"

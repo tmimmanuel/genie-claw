@@ -146,14 +146,21 @@ fi
 echo "[6/6] Enabling systemd services..."
 sudo systemctl daemon-reload
 
-# Enable core services.
-for svc in homeassistant genie-llm genie-core genie-governor genie-health genie-api genie-mqtt; do
+# Enable core services. genie-audio runs the I2S/AHUB route setup at boot
+# (no-op if /opt/geniepod/bin/genie-audio-init is missing, see ConditionPathExists).
+for svc in homeassistant genie-audio genie-llm genie-core genie-governor genie-health genie-api genie-mqtt; do
     if sudo systemctl enable "$svc.service" 2>/dev/null; then
         echo "  Enabled: $svc"
     else
         echo "  Skipped: $svc (unit not found)"
     fi
 done
+
+# Run audio init immediately so the current session also has the route set up
+# without requiring a reboot. Safe to run any time, idempotent.
+if [ -x "$GENIEPOD_DIR/bin/genie-audio-init" ]; then
+    "$GENIEPOD_DIR/bin/genie-audio-init" || echo "  audio init returned non-zero (non-fatal)"
+fi
 
 echo ""
 echo "=== Setup complete ==="

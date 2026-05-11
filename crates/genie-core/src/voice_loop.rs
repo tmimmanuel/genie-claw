@@ -451,14 +451,34 @@ async fn run_push_to_talk(
     Ok(())
 }
 
-/// Auto-detect USB audio device by scanning /proc/asound/cards.
-/// Returns the ALSA device string (e.g., "plughw:2,0") or None.
+/// Auto-detect the ALSA capture device.
+///
+/// First delegates to `/opt/geniepod/bin/detect-audio-device.sh` when present
+/// — that script understands both Tegra APE (LyraT / I2S2 on the 40-pin
+/// header, see `doc/lyrat-jetson-audio.md`) and USB audio. Falls back to an
+/// in-process scan of `/proc/asound/cards` for USB keywords so a stand-alone
+/// `cargo run` without the deploy layout still detects USB devices.
 async fn detect_audio_device() -> Option<String> {
+    const DETECT_SCRIPT: &str = "/opt/geniepod/bin/detect-audio-device.sh";
+
+    if tokio::fs::metadata(DETECT_SCRIPT).await.is_ok() {
+        match Command::new(DETECT_SCRIPT).output().await {
+            Ok(out) if out.status.success() => {
+                let dev = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !dev.is_empty() {
+                    return Some(dev);
+                }
+            }
+            Ok(_) => {} // script exit non-zero — fall through to in-process scan
+            Err(e) => tracing::debug!(error = %e, "detect-audio-device.sh failed, falling back"),
+        }
+    }
+
+    // In-process USB fallback (also used during dev when deploy script isn't installed).
     let cards = tokio::fs::read_to_string("/proc/asound/cards").await.ok()?;
 
     for line in cards.lines() {
         let line_lower = line.to_lowercase();
-        // Look for USB audio devices (common keywords)
         if line_lower.contains("usb-audio")
             || line_lower.contains("usb audio")
             || line_lower.contains("lenovo")
@@ -466,7 +486,6 @@ async fn detect_audio_device() -> Option<String> {
             || line_lower.contains("headset")
             || line_lower.contains("microphone")
         {
-            // Extract card number (first field on the line)
             let card_num = line.split_whitespace().next()?;
             if let Ok(num) = card_num.parse::<u32>() {
                 return Some(format!("plughw:{},0", num));
