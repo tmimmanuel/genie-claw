@@ -882,11 +882,18 @@ async fn voice_cycle(
             role: "system".into(),
             content: if let Some(language) = response_language.as_deref() {
                 format!(
-                    "Summarize the tool result in one natural sentence for voice. Use the user's language: {}.",
+                    "Answer the user's request conversationally using the tool result. \
+                     Be brief, ideally 5 to 10 words. Speak as a household assistant — \
+                     never say 'tool result', 'the tool indicates', 'the value is', or \
+                     similar machine phrasing. Use the user's language: {}.",
                     language
                 )
             } else {
-                "Summarize the tool result in one natural sentence for voice.".into()
+                "Answer the user's request conversationally using the tool result. \
+                 Be brief, ideally 5 to 10 words. Speak as a household assistant — \
+                 never say 'tool result', 'the tool indicates', 'the value is', or \
+                 similar machine phrasing."
+                    .into()
             },
         }];
         summary_msgs.extend(recent);

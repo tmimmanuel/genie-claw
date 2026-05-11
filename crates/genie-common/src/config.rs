@@ -1198,7 +1198,7 @@ mod defaults {
         48000
     }
     pub fn voice_record_secs() -> u32 {
-        5
+        3
     }
     pub fn voice_continuous_secs() -> u32 {
         3

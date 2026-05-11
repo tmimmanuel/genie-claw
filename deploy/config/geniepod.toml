@@ -26,7 +26,10 @@ audio_sample_rate = 48000         # USB headphone native sample rate. LyraT outp
                                   # ALSA plughw downmixes/resamples to whatever record_audio asks.
 voice_enabled = true              # Voice mode on by default in alpha.5 (push-to-talk).
                                   # Set false on hosts without whisper/piper installed.
-voice_record_secs = 5             # Seconds to record per voice interaction.
+voice_record_secs = 3             # Seconds to record per voice interaction. Most
+                                  # household commands ("what time is it", "turn on
+                                  # kitchen light") fit in 3 s; raise if you regularly
+                                  # ask longer multi-clause questions.
 voice_continuous = true           # After response, auto-listen for follow-up without re-wake.
 voice_continuous_secs = 3         # Shorter recording for follow-up conversation.
 llm_model_path = "/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf"  # For GPU time-sharing in voice mode.
