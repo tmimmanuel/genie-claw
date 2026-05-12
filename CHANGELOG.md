@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- `genie-llm-warmup.service` — a oneshot systemd unit ordered `After=genie-llm.service`
+  that polls `/health` and sends one tiny `/completion` request to force
+  Phi-4-mini into iGPU memory before the first user-visible voice cycle.
+  Without this the first voice interaction after boot would either block
+  on the ~30-60 s cold model load or time out with `503: Loading model`.
+  Wired into `setup-jetson.sh`'s enable loop so a fresh `make deploy` +
+  reboot ends with the LLM already hot. Closes #3.
+
 ## 1.0.0-alpha.5 - 2026-05-11
 
 Alpha 5 is the voice-frontend release. It takes GenieClaw from a chat/HTTP

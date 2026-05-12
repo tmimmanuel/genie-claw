@@ -1,0 +1,30 @@
+[Unit]
+Description=GeniePod LLM Warmup (force Phi-4-mini into iGPU before first voice cycle)
+Documentation=https://github.com/GeniePod/genie-claw/issues/3
+After=genie-llm.service
+Wants=genie-llm.service
+ConditionPathExists=/opt/geniepod/bin/llama-server
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Poll /health for up to 90 s while llama-server boots, then send one
+# tiny /completion request to force the model load into iGPU memory.
+# Without this, the first user-visible voice cycle either blocks on
+# the ~30-60 s cold load or times out with 503 "Loading model".
+# Failures are non-fatal (|| true) so a broken LLM does not block boot.
+ExecStart=/bin/sh -c '\
+    for i in $(seq 1 90); do \
+        if curl -sf -o /dev/null http://127.0.0.1:8080/health; then break; fi; \
+        sleep 1; \
+    done; \
+    curl -sf -X POST http://127.0.0.1:8080/completion \
+        -H "Content-Type: application/json" \
+        -d "{\"prompt\":\"hi\",\"n_predict\":1}" > /dev/null || true; \
+    echo "[genie-llm-warmup] done"'
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=geniepod.target
