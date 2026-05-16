@@ -14,8 +14,15 @@ name = "genie-core"
 path = "src/main.rs"
 
 [features]
-default = ["telegram"]
+default = ["telegram", "llama-cpp", "genie-ai-runtime"]
 telegram = []
+# LLM backend feature surface (declared per issue #32 closeout).
+# Both default-on so today's builds are byte-identical.
+# Per-backend `#[cfg]` gating of the modules and constructors will land
+# alongside the CI matrix from issue #34, so a `--no-default-features`
+# regression is caught automatically rather than silently bit-rotting.
+llama-cpp = []
+genie-ai-runtime = []
 
 [dependencies]
 genie-common = { workspace = true }

@@ -29,9 +29,9 @@ Voice in, voice out, controls Home Assistant, no cloud.**
    └────────┘   └────────┘   └──────┬───────┘   └───────┘
                                     │
                        memory ◄─────┼─────► local LLM
-                       (SQLite)     │       (llama.cpp today;
-                                    │        genie-ai-runtime
-                                    │        replacing it)
+                       (SQLite)     │       (llama.cpp by default,
+                                    │        genie-ai-runtime opt-in
+                                    │        via [services.llm].backend)
                                     ▼
                           Home Assistant
                           (rate-limited, audited)
@@ -65,7 +65,7 @@ This repo is the Rust agent runtime for a very specific product shape:
 - a local household memory system
 - safe handoff to a home-control runtime
 - transitional Home Assistant support while `genie-home-runtime` is not yet split out
-- transitional `llama.cpp` support while `genie-ai-runtime` is not yet split out
+- pluggable local LLM backend (`llama.cpp` default; `genie-ai-runtime` selectable via `[services.llm].backend = "genie_ai_runtime"`)
 - a privacy-first and security-first system
 - a memory-footprint-conscious runtime built for constrained edge hardware
 - a household trust model that exposes redacted posture, not raw config files
@@ -149,8 +149,11 @@ logic, response style, channels, and skill routing.
 
 At a high level:
 
-1. Today, `llama.cpp` provides the local model server. Longer term,
-   `genie-ai-runtime` should provide the Jetson-only inference service.
+1. The local model server is `llama.cpp` by default; the
+   `genie-ai-runtime` Jetson-tuned runtime is selectable per-deployment
+   via `[services.llm].backend = "genie_ai_runtime"` in `geniepod.toml`.
+   Backend identity flows through `LlmClient::backend_name()` into
+   logs, `/api/health`, and `genie-ctl status` for operator visibility.
 2. `genie-core` handles prompts, tool calls, memory, chat, and voice orchestration.
 3. Today, Home Assistant can provide device state and service execution. Longer term,
    `genie-home-runtime` should provide that boundary and the final actuation safety layer.

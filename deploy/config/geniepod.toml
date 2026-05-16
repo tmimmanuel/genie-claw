@@ -199,6 +199,12 @@ systemd_unit = "genie-core.service"
 [services.llm]
 url = "http://127.0.0.1:8080/health"
 systemd_unit = "genie-llm.service"
+# backend = "llama_cpp"             # Default. Local llama.cpp `--server` on :8080.
+# backend = "genie_ai_runtime"      # Jetson-tuned runtime (see GeniePod/genie-ai-runtime).
+                                    # Set systemd_unit = "genie-ai-runtime.service"
+                                    # and ensure the binary + a compatible model are
+                                    # installed before flipping this.
+                                    # Accepts hyphenated aliases too: "llama-cpp" / "genie-ai-runtime".
 
 # Uncomment to enable Home Assistant integration:
 # [services.homeassistant]

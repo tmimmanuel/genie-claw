@@ -78,7 +78,7 @@ The current repo still contains pragmatic adapters used to ship on Jetson now.
 
 | Current adapter | Long-term replacement | Notes |
 | --- | --- | --- |
-| `llama.cpp` OpenAI-compatible client | `genie-ai-runtime` client | Keep the client boundary narrow and model/runtime assumptions explicit. |
+| `llama.cpp` OpenAI-compatible client (default) | `genie-ai-runtime` client (opt-in) | Both backends ship behind the `LlmClient` facade; per-deployment selection via `[services.llm].backend` in `geniepod.toml`. Backend identity surfaces in `/api/health`, startup logs, and `genie-ctl status`. |
 | Home Assistant provider | `genie-home-runtime` MCP/API client | Keep HA-specific behavior behind `ha/` and tools/home boundaries. |
 | Actuation safety in `genie-core` | final safety in `genie-home-runtime` | Keep current safety as an agent-side guard and confirmation layer. |
 | `genie-api` dashboard | application layer | Keep it operational and lightweight; avoid making it the long-term product app. |
@@ -116,7 +116,8 @@ Code in memory, voice, prompt, and channels should not learn Home Assistant inte
 Current Jetson deployment:
 
 ```text
-llama-server (:8080)
+LLM backend (:8080)         # llama-server by default; genie-ai-runtime if
+                            # [services.llm].backend = "genie_ai_runtime"
         ^
         |
 genie-core (:3000) <---- genie-ctl
@@ -223,7 +224,7 @@ Long-term direction:
 The clean architecture path is incremental:
 
 1. Make boundary language consistent in docs and config.
-2. Keep Home Assistant and llama.cpp behind narrow adapter traits.
+2. Keep Home Assistant and LLM backends behind narrow adapter traits (LLM side resolved via the `LlmClient` facade in `crates/genie-core/src/llm/`).
 3. Move physical actuation authority downward into `genie-home-runtime` when it exists.
 4. Move Jetson model-server specialization downward into `genie-ai-runtime`.
 5. Keep GenieClaw focused on voice, memory, skills, tools, channels, and household interaction.
