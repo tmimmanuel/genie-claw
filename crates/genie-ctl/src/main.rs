@@ -18,7 +18,7 @@
 //!   genie-ctl version         Show version info
 
 use anyhow::Result;
-use genie_common::config::{Config, parse_service_probe_target};
+use genie_common::config::{Config, ServiceProbeTarget, parse_service_probe_target};
 use genie_core::skills::{
     SkillLoader, SkillManifestAudit, find_manifest_sidecar, manifest_sidecar_candidates,
     skills_dir as runtime_skills_dir,
@@ -38,22 +38,46 @@ fn load_core_addr() -> Result<String> {
     Ok(Config::load()?.core_http_addr())
 }
 
-/// Probe targets for the optional HTTP services that `status`, `diag`, and
+/// One row in the `status` / `diag` / support-bundle service probe list.
+#[derive(Debug, Clone)]
+struct OptionalProbe {
+    name: String,
+    target: ServiceProbeTarget,
+}
+
+/// Probe targets for the optional HTTP services that `health`, `diag`, and
 /// the support bundle inspect alongside `genie-core`. Reads `[services.api]`
 /// and `[services.homeassistant]` from `geniepod.toml` so non-default
 /// hosts/ports are honored. Home Assistant is omitted when not configured.
-fn optional_http_probes(config: &Config) -> Vec<(String, String, String)> {
-    let mut probes = Vec::new();
-
-    let (addr, path) = parse_service_probe_target(&config.services.api.url);
-    probes.push(("genie-api".to_string(), addr, path));
+///
+/// HTTPS-configured services come back as
+/// [`ServiceProbeTarget::UnsupportedScheme`]; callers should label the row
+/// (e.g. `[SKIP]`) rather than try to probe — see issue #126 review notes.
+fn optional_http_probes(config: &Config) -> Vec<OptionalProbe> {
+    let mut probes = vec![OptionalProbe {
+        name: "genie-api".to_string(),
+        target: parse_service_probe_target(&config.services.api.url),
+    }];
 
     if let Some(ha) = config.homeassistant_service() {
-        let (addr, path) = parse_service_probe_target(&ha.url);
-        probes.push(("Home Assistant".to_string(), addr, path));
+        probes.push(OptionalProbe {
+            name: "Home Assistant".to_string(),
+            target: parse_service_probe_target(&ha.url),
+        });
     }
 
     probes
+}
+
+/// HTTP `host:port` for use by callers that need to issue extra probes to
+/// genie-api (e.g. the support bundle's `/api/security`, `/api/actuation/audit`
+/// requests). Returns `Err(scheme)` when `[services.api].url` is configured
+/// with a scheme the plaintext probe can't handle.
+fn api_probe_addr(config: &Config) -> std::result::Result<String, String> {
+    match parse_service_probe_target(&config.services.api.url) {
+        ServiceProbeTarget::Http { addr, .. } => Ok(addr),
+        ServiceProbeTarget::UnsupportedScheme { scheme } => Err(scheme),
+    }
 }
 const SKILL_RESTART_HINT: &str =
     "Restart genie-core to load skill changes, or wait until the next startup.";
@@ -1075,10 +1099,20 @@ async fn cmd_health() -> Result<()> {
     }
 
     // Check each remaining HTTP service, honoring [services.*] in geniepod.toml.
-    for (name, addr, path) in optional_http_probes(&config) {
-        match http_get(&addr, &path).await {
-            Ok(_) => println!("  [OK]   {}", name),
-            Err(_) => println!("  [DOWN] {}", name),
+    for probe in optional_http_probes(&config) {
+        match probe.target {
+            ServiceProbeTarget::Http { addr, path } => match http_get(&addr, &path).await {
+                Ok(_) => println!("  [OK]   {}", probe.name),
+                Err(_) => println!("  [DOWN] {}", probe.name),
+            },
+            ServiceProbeTarget::UnsupportedScheme { scheme } => {
+                // Don't send plaintext to a TLS port and report DOWN — surface
+                // the limitation honestly so the operator can adjust.
+                println!(
+                    "  [SKIP] {} ({} probe not supported by genie-ctl)",
+                    probe.name, scheme
+                );
+            }
         }
     }
 
@@ -1194,18 +1228,22 @@ async fn cmd_diag() -> Result<()> {
 
     // Core health.
     println!("\n[Services]");
-    let mut services: Vec<(String, String, String)> = vec![(
-        "genie-core".to_string(),
-        core.clone(),
-        "/api/health".to_string(),
-    )];
-    services.extend(optional_http_probes(&config));
-    for (name, addr, path) in &services {
-        let status = match http_get(addr, path).await {
-            Ok(_) => "UP",
-            Err(_) => "DOWN",
+    let core_status = match http_get(&core, "/api/health").await {
+        Ok(_) => "UP",
+        Err(_) => "DOWN",
+    };
+    println!("  {:20} {}", "genie-core", core_status);
+    for probe in optional_http_probes(&config) {
+        let status = match probe.target {
+            ServiceProbeTarget::Http { addr, path } => match http_get(&addr, &path).await {
+                Ok(_) => "UP".to_string(),
+                Err(_) => "DOWN".to_string(),
+            },
+            ServiceProbeTarget::UnsupportedScheme { scheme } => {
+                format!("SKIP ({scheme} probe not supported)")
+            }
         };
-        println!("  {:20} {}", name, status);
+        println!("  {:20} {}", probe.name, status);
     }
     let gov_status = match governor_cmd(r#"{"cmd":"status"}"#).await {
         Some(_) => "UP",
@@ -1364,23 +1402,55 @@ async fn cmd_diag() -> Result<()> {
 async fn cmd_support_bundle(output_path: &Path) -> Result<()> {
     let config = Config::load()?;
     let core = config.core_http_addr();
-    let (api_addr, _api_path) = parse_service_probe_target(&config.services.api.url);
-    let mut services: Vec<(String, String, String)> = vec![(
-        "genie-core".to_string(),
-        core.clone(),
-        "/api/health".to_string(),
-    )];
-    services.extend(optional_http_probes(&config));
+    let api_addr_result = api_probe_addr(&config);
 
-    let mut service_status = Vec::new();
-    for (name, addr, path) in &services {
-        service_status.push(serde_json::json!({
-            "service": name,
-            "addr": addr,
-            "path": path,
-            "reachable": http_get(addr, path).await.is_ok(),
-        }));
+    let mut service_status = vec![serde_json::json!({
+        "service": "genie-core",
+        "addr": core.clone(),
+        "path": "/api/health",
+        "reachable": http_get(&core, "/api/health").await.is_ok(),
+    })];
+
+    for probe in optional_http_probes(&config) {
+        let row = match probe.target {
+            ServiceProbeTarget::Http { addr, path } => {
+                let reachable = http_get(&addr, &path).await.is_ok();
+                serde_json::json!({
+                    "service": probe.name,
+                    "addr": addr,
+                    "path": path,
+                    "reachable": reachable,
+                })
+            }
+            ServiceProbeTarget::UnsupportedScheme { scheme } => serde_json::json!({
+                "service": probe.name,
+                "skipped": true,
+                "unsupported_scheme": scheme,
+            }),
+        };
+        service_status.push(row);
     }
+
+    // Resolve once for the two extra genie-api probes below; if the api URL
+    // can't be probed (https today), record a structured skip in the bundle.
+    let (api_security, api_audit) = match &api_addr_result {
+        Ok(api_addr) => (
+            http_json_value(api_addr, "/api/security").await,
+            http_json_value(api_addr, "/api/actuation/audit").await,
+        ),
+        Err(scheme) => (
+            serde_json::json!({
+                "skipped": true,
+                "reason": "unsupported_scheme",
+                "scheme": scheme,
+            }),
+            serde_json::json!({
+                "skipped": true,
+                "reason": "unsupported_scheme",
+                "scheme": scheme,
+            }),
+        ),
+    };
 
     let bundle = serde_json::json!({
         "schema_version": 1,
@@ -1396,11 +1466,11 @@ async fn cmd_support_bundle(output_path: &Path) -> Result<()> {
             "runtime_contract": http_json_value(&core, "/api/runtime/contract").await,
             "connectivity": http_json_value(&core, "/api/connectivity").await,
         },
-        "security": http_json_value(&api_addr, "/api/security").await,
+        "security": api_security,
         "actuation": {
             "pending": http_json_value(&core, "/api/actuation/pending").await,
             "actions": http_json_value(&core, "/api/actuation/actions").await,
-            "audit": http_json_value(&api_addr, "/api/actuation/audit").await,
+            "audit": api_audit,
         },
         "system": {
             "meminfo": read_file_lines("/proc/meminfo", 8),
@@ -1713,6 +1783,15 @@ mod tests {
         toml::from_str("").expect("default config should parse from empty TOML")
     }
 
+    fn expect_http_target(target: &ServiceProbeTarget) -> (&str, &str) {
+        match target {
+            ServiceProbeTarget::Http { addr, path } => (addr.as_str(), path.as_str()),
+            ServiceProbeTarget::UnsupportedScheme { scheme } => {
+                panic!("expected Http target, got UnsupportedScheme({scheme})")
+            }
+        }
+    }
+
     #[test]
     fn optional_http_probes_uses_configured_api_url() {
         let mut config = default_test_config();
@@ -1721,9 +1800,10 @@ mod tests {
         let probes = optional_http_probes(&config);
         // Default config has no homeassistant; only the api probe is present.
         assert_eq!(probes.len(), 1);
-        assert_eq!(probes[0].0, "genie-api");
-        assert_eq!(probes[0].1, "10.0.0.7:4080");
-        assert_eq!(probes[0].2, "/api/status");
+        assert_eq!(probes[0].name, "genie-api");
+        let (addr, path) = expect_http_target(&probes[0].target);
+        assert_eq!(addr, "10.0.0.7:4080");
+        assert_eq!(path, "/api/status");
     }
 
     #[test]
@@ -1733,7 +1813,7 @@ mod tests {
 
         let probes = optional_http_probes(&config);
         assert!(
-            !probes.iter().any(|(name, _, _)| name == "Home Assistant"),
+            !probes.iter().any(|p| p.name == "Home Assistant"),
             "HA probe must be omitted when [services.homeassistant] is absent",
         );
     }
@@ -1750,10 +1830,51 @@ mod tests {
         let probes = optional_http_probes(&config);
         let ha = probes
             .iter()
-            .find(|(name, _, _)| name == "Home Assistant")
+            .find(|p| p.name == "Home Assistant")
             .expect("HA probe should be present");
-        assert_eq!(ha.1, "192.168.1.50:8123");
-        assert_eq!(ha.2, "/");
+        let (addr, path) = expect_http_target(&ha.target);
+        assert_eq!(addr, "192.168.1.50:8123");
+        assert_eq!(path, "/");
+    }
+
+    #[test]
+    fn optional_http_probes_marks_https_homeassistant_as_unsupported() {
+        // Regression for PR #127 review: an HTTPS HA URL must NOT collapse
+        // to a plaintext probe — surface it as UnsupportedScheme so the
+        // caller can label the row rather than report DOWN.
+        let mut config = default_test_config();
+        config.services.homeassistant = Some(ServiceEndpoint {
+            url: "https://ha.example/api/".into(),
+            systemd_unit: "homeassistant.service".into(),
+            backend: Default::default(),
+        });
+
+        let probes = optional_http_probes(&config);
+        let ha = probes
+            .iter()
+            .find(|p| p.name == "Home Assistant")
+            .expect("HA probe should be present even when https");
+        match &ha.target {
+            ServiceProbeTarget::UnsupportedScheme { scheme } => assert_eq!(scheme, "https"),
+            ServiceProbeTarget::Http { .. } => {
+                panic!("https HA URL must not produce an Http probe target")
+            }
+        }
+    }
+
+    #[test]
+    fn api_probe_addr_returns_scheme_error_for_https_api() {
+        let mut config = default_test_config();
+        config.services.api.url = "https://api.example/api/status".into();
+        assert_eq!(api_probe_addr(&config), Err("https".to_string()));
+    }
+
+    #[test]
+    fn api_probe_addr_returns_addr_for_ipv6_without_port() {
+        // Pairs with the IPv6 bracket regression in genie-common.
+        let mut config = default_test_config();
+        config.services.api.url = "http://[::1]/api/status".into();
+        assert_eq!(api_probe_addr(&config), Ok("[::1]:80".to_string()));
     }
 
     fn workspace_root() -> PathBuf {

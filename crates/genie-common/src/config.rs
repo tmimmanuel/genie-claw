@@ -623,41 +623,134 @@ pub struct ServiceEndpoint {
     pub backend: LlmBackendKind,
 }
 
-/// Parse a configured service URL into a `(host:port, path)` pair suitable
-/// for the simple TCP/HTTP probes used by `genie-ctl`.
+/// Result of resolving a configured service URL for the simple TCP probe
+/// path used by `genie-ctl status` / `diag` / `support-bundle`.
 ///
-/// - `http://` / `https://` schemes are accepted; anything else is treated
-///   as a bare authority.
-/// - Missing port defaults to 80 (http) or 443 (https).
+/// `Http` targets are usable by a plaintext TCP client. Anything else
+/// (today: `https://`, plus unknown schemes that look like a scheme but
+/// aren't `http`) is returned as [`ServiceProbeTarget::UnsupportedScheme`]
+/// so callers can label the row instead of mis-reporting a healthy
+/// service as DOWN by sending plaintext to a TLS port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceProbeTarget {
+    /// Plain-HTTP probe target.
+    Http {
+        /// `host:port`, with IPv6 hosts kept bracketed (e.g. `[::1]:80`)
+        /// so the string round-trips through `to_socket_addrs`.
+        addr: String,
+        /// Request path, always starting with `/`.
+        path: String,
+    },
+    /// Scheme the plain-TCP probe cannot service. `genie-ctl` should skip
+    /// the probe and surface "scheme not supported" rather than DOWN.
+    /// Wiring in a TLS client is tracked separately; see issue #126
+    /// discussion.
+    UnsupportedScheme {
+        /// The scheme as found in the URL (lowercased), e.g. `"https"`.
+        scheme: String,
+    },
+}
+
+/// Parse a configured service URL into a probe target for `genie-ctl`'s
+/// plain-TCP HTTP client.
+///
+/// Behavior:
+/// - Bare URLs without a scheme are treated as `http://…`.
+/// - `http://` URLs produce [`ServiceProbeTarget::Http`].
+/// - `https://` (and any other recognized scheme that isn't `http`) produces
+///   [`ServiceProbeTarget::UnsupportedScheme`] — the probe path cannot speak
+///   TLS, so we refuse rather than send plaintext to port 443.
+/// - Missing port defaults to 80 for `http`.
 /// - Missing path defaults to `/`.
-pub fn parse_service_probe_target(url: &str) -> (String, String) {
-    let (is_https, rest) = if let Some(rest) = url.strip_prefix("https://") {
-        (true, rest)
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        (false, rest)
-    } else {
-        (false, url)
+/// - IPv6 hosts must be bracketed (`[::1]`, `[::1]:8123`); brackets are
+///   preserved in the returned `addr` so the string parses with
+///   `std::net::ToSocketAddrs`.
+pub fn parse_service_probe_target(url: &str) -> ServiceProbeTarget {
+    // Scheme split. A leading `scheme://` is recognized when the scheme is
+    // ASCII letters followed by `://`. Anything else falls through as a
+    // bare `http` authority — keeps existing config files that wrote
+    // `127.0.0.1:3080/api/status` working.
+    let (scheme, rest) = match split_scheme(url) {
+        Some((scheme, rest)) => (scheme, rest),
+        None => ("http", url),
     };
 
-    let (authority, path) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
-    };
+    if scheme != "http" {
+        return ServiceProbeTarget::UnsupportedScheme {
+            scheme: scheme.to_string(),
+        };
+    }
 
-    let authority = if authority.contains(':') {
-        authority.to_string()
-    } else {
-        let port = if is_https { 443 } else { 80 };
-        format!("{authority}:{port}")
-    };
-
+    let (authority, path) = split_authority_and_path(rest);
+    let addr = ensure_port(authority, 80);
     let path = if path.is_empty() {
         "/".to_string()
     } else {
         path.to_string()
     };
 
-    (authority, path)
+    ServiceProbeTarget::Http { addr, path }
+}
+
+/// Split a URL into `(lowercased_scheme, rest_after_://)` when it starts
+/// with a `scheme://` prefix; otherwise `None`.
+fn split_scheme(url: &str) -> Option<(&'static str, &str)> {
+    // Only recognize the two schemes this codebase actually uses; anything
+    // else falls through and is reported as unsupported via the caller's
+    // exhaustive match. Keeping this small avoids pretending we understand
+    // arbitrary URLs.
+    for scheme in ["http", "https"] {
+        let prefix = match scheme {
+            "http" => "http://",
+            "https" => "https://",
+            _ => unreachable!(),
+        };
+        if let Some(rest) = url.strip_prefix(prefix) {
+            return Some((scheme, rest));
+        }
+    }
+    None
+}
+
+/// Split `authority[path]` into (authority, path). IPv6 brackets are
+/// respected: the first `/` *after* a closing `]` is the path delimiter,
+/// not any earlier slash that might appear inside `[…]` (it can't today,
+/// but the rule is the simplest correct one).
+fn split_authority_and_path(rest: &str) -> (&str, &str) {
+    // For `[…]…` find the closing bracket first and split on the first
+    // `/` that follows it. Otherwise split on the first `/`.
+    let scan_from = if rest.starts_with('[') {
+        rest.find(']').map(|i| i + 1).unwrap_or(rest.len())
+    } else {
+        0
+    };
+
+    match rest[scan_from..].find('/') {
+        Some(idx) => rest.split_at(scan_from + idx),
+        None => (rest, "/"),
+    }
+}
+
+/// Append `:default_port` to `authority` unless it already carries an
+/// explicit port. Bracket-aware so a bare `[::1]` correctly gets the
+/// default added (a naive `contains(':')` check would treat the colons
+/// inside the brackets as a port separator).
+fn ensure_port(authority: &str, default_port: u16) -> String {
+    let has_explicit_port = if let Some(rest) = authority.strip_prefix('[') {
+        // Bracketed IPv6. A port, if present, follows the closing `]`.
+        rest.find(']')
+            .map(|i| rest[i + 1..].starts_with(':'))
+            .unwrap_or(false)
+    } else {
+        // Hostname or IPv4 — a single colon means `host:port`.
+        authority.contains(':')
+    };
+
+    if has_explicit_port {
+        authority.to_string()
+    } else {
+        format!("{authority}:{default_port}")
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -1050,38 +1143,84 @@ systemd_unit = "genie-ai-runtime.service"
         assert_eq!(services.api.url, "http://127.0.0.1:3080/api/status");
     }
 
+    fn http_target(url: &str) -> (String, String) {
+        match parse_service_probe_target(url) {
+            ServiceProbeTarget::Http { addr, path } => (addr, path),
+            other => panic!("expected Http target for {url}, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_service_probe_target_splits_http_url() {
-        let (addr, path) = parse_service_probe_target("http://127.0.0.1:3080/api/status");
+        let (addr, path) = http_target("http://127.0.0.1:3080/api/status");
         assert_eq!(addr, "127.0.0.1:3080");
         assert_eq!(path, "/api/status");
     }
 
     #[test]
     fn parse_service_probe_target_keeps_trailing_slash() {
-        let (addr, path) = parse_service_probe_target("http://192.168.1.50:8123/");
+        let (addr, path) = http_target("http://192.168.1.50:8123/");
         assert_eq!(addr, "192.168.1.50:8123");
         assert_eq!(path, "/");
     }
 
     #[test]
     fn parse_service_probe_target_defaults_http_port_when_missing() {
-        let (addr, path) = parse_service_probe_target("http://homeassistant.local/api/");
+        let (addr, path) = http_target("http://homeassistant.local/api/");
         assert_eq!(addr, "homeassistant.local:80");
         assert_eq!(path, "/api/");
     }
 
     #[test]
-    fn parse_service_probe_target_handles_https_default_port() {
-        let (addr, path) = parse_service_probe_target("https://example.test/health");
-        assert_eq!(addr, "example.test:443");
-        assert_eq!(path, "/health");
+    fn parse_service_probe_target_defaults_path_when_missing() {
+        let (addr, path) = http_target("http://127.0.0.1:8123");
+        assert_eq!(addr, "127.0.0.1:8123");
+        assert_eq!(path, "/");
     }
 
     #[test]
-    fn parse_service_probe_target_defaults_path_when_missing() {
-        let (addr, path) = parse_service_probe_target("http://127.0.0.1:8123");
-        assert_eq!(addr, "127.0.0.1:8123");
+    fn parse_service_probe_target_treats_bare_url_as_http() {
+        // Some legacy configs wrote the host:port without a scheme; keep
+        // them working as http targets.
+        let (addr, path) = http_target("127.0.0.1:3080/api/status");
+        assert_eq!(addr, "127.0.0.1:3080");
+        assert_eq!(path, "/api/status");
+    }
+
+    #[test]
+    fn parse_service_probe_target_rejects_https_as_unsupported() {
+        // Regression for PR #127 review: HTTPS must NOT silently default to
+        // port 443 and then be probed with plaintext over a raw TcpStream —
+        // a healthy HTTPS service would be reported DOWN. Surface it as an
+        // explicit unsupported scheme so the caller can label the row.
+        match parse_service_probe_target("https://ha.example/api/") {
+            ServiceProbeTarget::UnsupportedScheme { scheme } => assert_eq!(scheme, "https"),
+            other => panic!("expected UnsupportedScheme for https://, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_service_probe_target_handles_ipv6_with_explicit_port() {
+        let (addr, path) = http_target("http://[::1]:3080/api/status");
+        assert_eq!(addr, "[::1]:3080");
+        assert_eq!(path, "/api/status");
+    }
+
+    #[test]
+    fn parse_service_probe_target_adds_default_port_to_bracketed_ipv6() {
+        // Regression for PR #127 review: a naive `authority.contains(':')`
+        // check sees the colons inside [::1] and skips the default port,
+        // producing `[::1]` which TcpStream::connect cannot parse. Make
+        // sure we emit `[::1]:80` instead.
+        let (addr, path) = http_target("http://[::1]/api/status");
+        assert_eq!(addr, "[::1]:80");
+        assert_eq!(path, "/api/status");
+    }
+
+    #[test]
+    fn parse_service_probe_target_handles_bracketed_ipv6_without_path() {
+        let (addr, path) = http_target("http://[fe80::1%25eth0]");
+        assert_eq!(addr, "[fe80::1%25eth0]:80");
         assert_eq!(path, "/");
     }
 
