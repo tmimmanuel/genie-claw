@@ -1,14 +1,19 @@
 name: Voice pipeline issue
-description: Wake word, VAD, STT (Whisper), LLM, TTS (Piper), or first-reply latency banner — anything in the voice loop.
+description: Wake word, VAD, STT (Whisper), LLM, TTS (Piper), or first-reply latency banner — transitional voice issues in GenieClaw.
 title: "[voice] "
 labels: ["bug", "voice"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template for any issue in the **wake → VAD → STT → LLM → TTS**
-        loop. The structured fields collect the context needed to diagnose
-        latency, accuracy, or routing problems without a back-and-forth.
+        Use this template for current GenieClaw issues in the **wake → VAD → STT
+        → LLM → TTS** loop. The structured fields collect the context needed to
+        diagnose latency, accuracy, or routing problems without a back-and-forth.
+
+        New voice-runtime implementation work belongs in
+        https://github.com/GeniePod/genie-voice-runtime. GenieClaw should remain
+        the agent layer: transcript in, policy/tools/memory/home intent,
+        response text out.
 
   - type: textarea
     id: summary
