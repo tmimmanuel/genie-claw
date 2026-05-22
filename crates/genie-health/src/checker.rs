@@ -311,6 +311,8 @@ mod tests {
         Config {
             data_dir: PathBuf::from("/tmp/geniepod-health-test"),
             core: CoreConfig::default(),
+            agent: Default::default(),
+            optional_ai_provider: Default::default(),
             governor: GovernorConfig {
                 poll_interval_ms: 1000,
                 night_start_hour: 23,

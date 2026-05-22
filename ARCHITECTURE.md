@@ -19,6 +19,16 @@ It sits below:
 
 The purpose of this repo is to make the local home AI useful, private, safe, and understandable. It should not grow into the OS, the full home automation engine, the CUDA inference runtime, or the product app.
 
+The architectural invariant is now enforced in code as well as docs:
+
+- `genie_core::runtime_boundary` names the AI, voice, and home runtime owners.
+- `genie_core::agent_harness` validates prompt, tool, memory, response reserve,
+  and optional-provider context against the Jetson 4096-token baseline.
+- `[agent]` selects the deployment profile while keeping `jetson` as the
+  flagship default.
+- `[optional_ai_provider]` is opt-in and cannot become a production candidate
+  unless it remains limited-context compatible.
+
 ## Ecosystem Stack
 
 ```text
@@ -184,6 +194,39 @@ Long-term safety responsibilities in `genie-home-runtime`:
 - recovery and rollback behavior
 
 The agent may propose or request actions. The home runtime decides whether physical execution is allowed.
+
+## Portable Profiles
+
+GenieClaw supports portable development without changing the native product
+shape. `[agent].runtime_profile` describes where the same agent harness is
+running:
+
+| Profile | Purpose |
+| --- | --- |
+| `jetson` | Flagship GeniePod Home path; 4096-token baseline and local runtime default |
+| `raspberry_pi` | SBC development profile for headless agent and provider work |
+| `portable_sbc` | Generic SBC profile where voice/home runtimes may be absent |
+| `laptop` | Developer profile for local tests, docs, and provider integration |
+| `mac` | macOS developer profile; no Jetson-specific runtime assumptions |
+
+Profiles do not change ownership. They only make the same limited-context agent
+contract portable enough for development and review on non-Jetson hardware.
+
+## Optional Providers
+
+API-key AI providers are optional provider boundaries, not the default product
+runtime. They must satisfy all of these before being treated as production
+paths:
+
+- configured under `[optional_ai_provider]`, disabled by default
+- API key comes from an environment variable, not the TOML value itself
+- `context_window_tokens <= [agent].context_window_tokens`
+- remote endpoints require `allow_remote_base_url = true`
+- prompt/tool/memory budget passes `genie_core::agent_harness`
+
+The flagship path remains local `genie-ai-runtime` on Jetson. Optional providers
+exist to make development, CI, and non-Jetson deployments easier without
+weakening the limited-context home-agent contract.
 
 ## Memory Ownership
 

@@ -4,6 +4,21 @@
 
 data_dir = "./data"
 
+[agent]
+runtime_profile = "laptop"         # Dev default; Jetson production uses "jetson".
+context_window_tokens = 4096       # Keep provider/harness tests honest on non-Jetson hosts.
+ai_runtime_boundary = "external_runtime"
+voice_runtime_boundary = "disabled"
+home_runtime_boundary = "transitional_adapter"
+
+[optional_ai_provider]
+enabled = false
+provider = "open_ai_compatible"
+base_url = ""
+api_key_env = "GENIEPOD_AI_PROVIDER_API_KEY"
+context_window_tokens = 4096
+allow_remote_base_url = false
+
 [core]
 port = 3000
 bind_host = "127.0.0.1"

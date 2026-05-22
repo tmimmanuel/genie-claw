@@ -1,0 +1,132 @@
+//! Optional API-provider planning for non-default LLM paths.
+//!
+//! This module intentionally does not add provider SDKs or change the local
+//! Jetson default. It validates whether an API-key provider is eligible to be
+//! wired behind the existing LLM facade without violating the limited-context
+//! agent contract.
+
+use genie_common::config::{
+    AgentConfig, OptionalAiProviderConfig, OptionalAiProviderKind,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderReadiness {
+    Disabled,
+    Ready,
+    Blocked(Vec<&'static str>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptionalProviderPlan {
+    pub provider: OptionalAiProviderKind,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub context_window_tokens: u32,
+    pub remote_allowed: bool,
+}
+
+impl OptionalProviderPlan {
+    pub fn from_config(config: &OptionalAiProviderConfig) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
+
+        Some(Self {
+            provider: config.provider,
+            base_url: config.base_url.clone(),
+            api_key_env: config.api_key_env.clone(),
+            context_window_tokens: config.context_window_tokens,
+            remote_allowed: config.allow_remote_base_url,
+        })
+    }
+
+    pub fn readiness(&self, agent: &AgentConfig) -> ProviderReadiness {
+        let mut reasons = Vec::new();
+        if self.context_window_tokens > agent.context_window_tokens {
+            reasons.push("context_window_exceeds_agent_budget");
+        }
+        if self.api_key_env.trim().is_empty() {
+            reasons.push("missing_api_key_env");
+        }
+        if self.base_url.trim().is_empty() {
+            reasons.push("missing_base_url");
+        }
+        if remote_url(&self.base_url) && !self.remote_allowed {
+            reasons.push("remote_base_url_not_allowed");
+        }
+
+        if reasons.is_empty() {
+            ProviderReadiness::Ready
+        } else {
+            ProviderReadiness::Blocked(reasons)
+        }
+    }
+}
+
+fn remote_url(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() {
+        return false;
+    }
+    let stripped = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let authority = stripped.split('/').next().unwrap_or(stripped);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.find(']')
+            .map(|idx| &authority[..=idx + 1])
+            .unwrap_or(authority)
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+    !matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_provider_has_no_plan() {
+        assert!(
+            OptionalProviderPlan::from_config(&OptionalAiProviderConfig::default()).is_none()
+        );
+    }
+
+    #[test]
+    fn remote_provider_requires_explicit_allow_and_budget_fit() {
+        let provider = OptionalAiProviderConfig {
+            enabled: true,
+            provider: OptionalAiProviderKind::OpenAiCompatible,
+            base_url: "https://provider.example/v1".into(),
+            api_key_env: "GENIE_PROVIDER_KEY".into(),
+            context_window_tokens: 8192,
+            allow_remote_base_url: false,
+        };
+        let plan = OptionalProviderPlan::from_config(&provider).unwrap();
+
+        assert_eq!(
+            plan.readiness(&AgentConfig::default()),
+            ProviderReadiness::Blocked(vec![
+                "context_window_exceeds_agent_budget",
+                "remote_base_url_not_allowed"
+            ])
+        );
+    }
+
+    #[test]
+    fn local_openai_compatible_provider_can_be_ready() {
+        let provider = OptionalAiProviderConfig {
+            enabled: true,
+            provider: OptionalAiProviderKind::OpenAiCompatible,
+            base_url: "http://127.0.0.1:11434/v1".into(),
+            api_key_env: "LOCAL_PROVIDER_KEY".into(),
+            context_window_tokens: 4096,
+            allow_remote_base_url: false,
+        };
+        let plan = OptionalProviderPlan::from_config(&provider).unwrap();
+
+        assert_eq!(plan.readiness(&AgentConfig::default()), ProviderReadiness::Ready);
+    }
+}

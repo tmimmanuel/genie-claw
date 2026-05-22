@@ -1951,6 +1951,8 @@ mod tests {
                 bind_host: "127.0.0.1".into(),
                 ..CoreConfig::default()
             },
+            agent: Default::default(),
+            optional_ai_provider: Default::default(),
             governor: GovernorConfig::default(),
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
@@ -1976,6 +1978,8 @@ mod tests {
                 bind_host: "0.0.0.0".into(),
                 ..CoreConfig::default()
             },
+            agent: Default::default(),
+            optional_ai_provider: Default::default(),
             governor: GovernorConfig::default(),
             health: HealthConfig::default(),
             services: ServicesConfig::default(),

@@ -16,6 +16,7 @@
 //!
 //! | Module | What it does |
 //! |--------|-------------|
+//! | [`agent_harness`] | Limited-context prompt/tool/memory/provider contract checks |
 //! | [`llm`] | OpenAI-compatible local LLM client (llama.cpp, Ollama, any API) |
 //! | [`ha`] | Home Assistant provider boundary, structure cache, and REST client |
 //! | [`tools`] | Compiled tool dispatch + parser for LLM JSON output |
@@ -24,6 +25,7 @@
 //! | [`connectivity`] | Boundary for an ESP32-C6 UART Thread/Matter coprocessor |
 //! | [`context`] | LLM context window management with summarization |
 //! | [`prompt`] | Model-aware system prompt builder (6 LLM families) |
+//! | [`runtime_boundary`] | Explicit AI/voice/home lower-runtime ownership contracts |
 //! | [`voice`] | STT/TTS subprocess management + voice output formatter (feature `voice`, default-on) |
 //! | [`ota`] | OTA update checker via GitHub Releases |
 //! | [`server`] | HTTP chat API server |
@@ -40,6 +42,7 @@
 #![allow(dead_code, unused_variables, unused_assignments)]
 #![allow(clippy::too_many_arguments, clippy::empty_line_after_doc_comments)]
 
+pub mod agent_harness;
 pub mod connectivity;
 pub mod context;
 pub mod conversation;
@@ -51,6 +54,7 @@ pub mod profile;
 pub mod prompt;
 pub mod reasoning;
 pub mod repl;
+pub mod runtime_boundary;
 pub mod runtime_contract;
 pub mod runtime_mode;
 pub mod security;

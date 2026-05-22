@@ -2,6 +2,7 @@ mod genie_ai_runtime;
 mod llama_cpp;
 mod mock;
 mod openai_compat;
+mod provider;
 mod retry;
 
 use anyhow::Result;
@@ -12,6 +13,7 @@ pub use genie_ai_runtime::GenieAiRuntimeBackend;
 pub use llama_cpp::LlamaCppBackend;
 pub use mock::MockLlmBackend;
 pub use openai_compat::{Message, ResponseFormat};
+pub use provider::{OptionalProviderPlan, ProviderReadiness};
 #[allow(unused_imports)]
 pub use retry::RetryLlmClient;
 

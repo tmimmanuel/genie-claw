@@ -15,6 +15,12 @@ pub struct Config {
     pub core: CoreConfig,
 
     #[serde(default)]
+    pub agent: AgentConfig,
+
+    #[serde(default)]
+    pub optional_ai_provider: OptionalAiProviderConfig,
+
+    #[serde(default)]
     pub governor: GovernorConfig,
 
     #[serde(default)]
@@ -220,6 +226,157 @@ impl Default for CoreConfig {
             actuation_safety: ActuationSafetyConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AgentConfig {
+    /// Primary deployment profile. Jetson stays the flagship default, but the
+    /// agent contract must also run on portable dev hosts and SBCs.
+    #[serde(default)]
+    pub runtime_profile: AgentRuntimeProfile,
+
+    /// Non-negotiable context budget for the Jetson baseline. Stronger models
+    /// may adapt upward later, but production paths must pass this budget first.
+    #[serde(default = "defaults::agent_context_window_tokens")]
+    pub context_window_tokens: u32,
+
+    /// AI runtime boundary owned below GenieClaw.
+    #[serde(default = "defaults::agent_ai_boundary")]
+    pub ai_runtime_boundary: RuntimeBoundaryMode,
+
+    /// Voice runtime boundary. The in-repo path is transitional only.
+    #[serde(default = "defaults::agent_voice_boundary")]
+    pub voice_runtime_boundary: RuntimeBoundaryMode,
+
+    /// Home runtime boundary. Home Assistant is a transitional provider today.
+    #[serde(default = "defaults::agent_home_boundary")]
+    pub home_runtime_boundary: RuntimeBoundaryMode,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            runtime_profile: AgentRuntimeProfile::Jetson,
+            context_window_tokens: defaults::agent_context_window_tokens(),
+            ai_runtime_boundary: defaults::agent_ai_boundary(),
+            voice_runtime_boundary: defaults::agent_voice_boundary(),
+            home_runtime_boundary: defaults::agent_home_boundary(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeProfile {
+    #[default]
+    Jetson,
+    RaspberryPi,
+    PortableSbc,
+    Laptop,
+    Mac,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeBoundaryMode {
+    /// Stable external runtime contract. This is the target shape.
+    #[default]
+    ExternalRuntime,
+    /// In-repo adapter kept only until the external runtime takes ownership.
+    TransitionalAdapter,
+    /// Disabled on this profile.
+    Disabled,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OptionalAiProviderConfig {
+    /// API-key provider support is opt-in and must not change the default
+    /// Jetson local binary path.
+    #[serde(default)]
+    pub enabled: bool,
+
+    #[serde(default)]
+    pub provider: OptionalAiProviderKind,
+
+    /// Base URL or endpoint identifier for provider clients. Empty while
+    /// disabled. Remote endpoints require allow_remote_base_url = true.
+    #[serde(default)]
+    pub base_url: String,
+
+    /// Environment variable that contains the API key. The key value itself is
+    /// never stored in config and is not included in support summaries.
+    #[serde(default = "defaults::optional_ai_provider_api_key_env")]
+    pub api_key_env: String,
+
+    /// Provider path must pass the same limited-context harness before it is
+    /// promoted. Keep this at or below [agent].context_window_tokens.
+    #[serde(default = "defaults::agent_context_window_tokens")]
+    pub context_window_tokens: u32,
+
+    /// Explicit opt-in for non-local endpoints.
+    #[serde(default)]
+    pub allow_remote_base_url: bool,
+}
+
+impl OptionalAiProviderConfig {
+    pub fn limited_context_compatible(&self, agent: &AgentConfig) -> bool {
+        !self.enabled || self.context_window_tokens <= agent.context_window_tokens
+    }
+
+    pub fn production_candidate(&self, agent: &AgentConfig) -> bool {
+        self.enabled
+            && self.limited_context_compatible(agent)
+            && !self.api_key_env.trim().is_empty()
+            && (!is_remote_url(&self.base_url) || self.allow_remote_base_url)
+    }
+}
+
+impl Default for OptionalAiProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: OptionalAiProviderKind::OpenAiCompatible,
+            base_url: String::new(),
+            api_key_env: defaults::optional_ai_provider_api_key_env(),
+            context_window_tokens: defaults::agent_context_window_tokens(),
+            allow_remote_base_url: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionalAiProviderKind {
+    /// Generic OpenAI-compatible API surface. Concrete providers can map into
+    /// this without adding a heavyweight SDK dependency.
+    #[default]
+    #[serde(alias = "openai_compatible")]
+    OpenAiCompatible,
+    #[serde(alias = "openai")]
+    OpenAi,
+    Anthropic,
+    Gemini,
+    Custom,
+}
+
+fn is_remote_url(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() {
+        return false;
+    }
+    let stripped = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let authority = stripped.split('/').next().unwrap_or(stripped);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.find(']')
+            .map(|idx| &authority[..=idx + 1])
+            .unwrap_or(authority)
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+    !matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]")
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -915,6 +1072,22 @@ impl Config {
         if self.telegram.enabled && !self.telegram.bot_token.trim().is_empty() {
             risk_flags.push("telegram_token_in_config_file");
         }
+        if self.optional_ai_provider.enabled {
+            risk_flags.push("optional_ai_provider_enabled");
+        }
+        if self.optional_ai_provider.enabled
+            && !self
+                .optional_ai_provider
+                .limited_context_compatible(&self.agent)
+        {
+            risk_flags.push("optional_ai_provider_context_exceeds_agent_budget");
+        }
+        if self.optional_ai_provider.enabled
+            && is_remote_url(&self.optional_ai_provider.base_url)
+            && !self.optional_ai_provider.allow_remote_base_url
+        {
+            risk_flags.push("optional_ai_provider_remote_url_blocked");
+        }
         if !self.core.skill_policy.require_manifest {
             risk_flags.push("skill_manifest_not_required");
         }
@@ -926,6 +1099,14 @@ impl Config {
             "trust_model": "single_household_operator_boundary",
             "raw_config_exposed": false,
             "raw_config_policy": "local_operator_file_only",
+            "agent": {
+                "runtime_profile": format!("{:?}", self.agent.runtime_profile),
+                "context_window_tokens": self.agent.context_window_tokens,
+                "ai_runtime_boundary": format!("{:?}", self.agent.ai_runtime_boundary),
+                "voice_runtime_boundary": format!("{:?}", self.agent.voice_runtime_boundary),
+                "home_runtime_boundary": format!("{:?}", self.agent.home_runtime_boundary),
+                "agent_layer_only": true
+            },
             "shared_memory": {
                 "mode": "household_shared_by_default",
                 "dashboard_manager_enabled": true,
@@ -944,7 +1125,18 @@ impl Config {
                 "telegram_enabled": self.telegram.enabled,
                 "telegram_allowlist_enabled": self.telegram.enabled && !self.telegram.allow_all_chats && !self.telegram.allowed_chat_ids.is_empty(),
                 "homeassistant_bridge_configured": self.services.homeassistant.is_some(),
-                "connectivity_coprocessor_enabled": self.connectivity_enabled()
+                "connectivity_coprocessor_enabled": self.connectivity_enabled(),
+                "optional_ai_provider_enabled": self.optional_ai_provider.enabled
+            },
+            "optional_ai_provider": {
+                "enabled": self.optional_ai_provider.enabled,
+                "provider": format!("{:?}", self.optional_ai_provider.provider),
+                "context_window_tokens": self.optional_ai_provider.context_window_tokens,
+                "limited_context_compatible": self.optional_ai_provider.limited_context_compatible(&self.agent),
+                "allow_remote_base_url": self.optional_ai_provider.allow_remote_base_url,
+                "api_key_env_configured": !self.optional_ai_provider.api_key_env.trim().is_empty(),
+                "base_url_configured": !self.optional_ai_provider.base_url.trim().is_empty(),
+                "api_key_value_exposed": false
             },
             "policy": {
                 "tool_policy_enabled": self.core.tool_policy.enabled,
@@ -1081,6 +1273,8 @@ mod tests {
         Config {
             data_dir: defaults::data_dir(),
             core: CoreConfig::default(),
+            agent: AgentConfig::default(),
+            optional_ai_provider: OptionalAiProviderConfig::default(),
             governor: GovernorConfig::default(),
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
@@ -1095,6 +1289,93 @@ mod tests {
         let config = test_config();
         assert!(config.homeassistant_service().is_none());
         assert!(!config.manages_service_alias("homeassistant"));
+    }
+
+    #[test]
+    fn agent_profile_defaults_to_jetson_limited_context() {
+        let config = test_config();
+        assert_eq!(config.agent.runtime_profile, AgentRuntimeProfile::Jetson);
+        assert_eq!(config.agent.context_window_tokens, 4096);
+        assert_eq!(
+            config.agent.ai_runtime_boundary,
+            RuntimeBoundaryMode::ExternalRuntime
+        );
+        assert_eq!(
+            config.agent.voice_runtime_boundary,
+            RuntimeBoundaryMode::TransitionalAdapter
+        );
+        assert_eq!(
+            config.agent.home_runtime_boundary,
+            RuntimeBoundaryMode::TransitionalAdapter
+        );
+    }
+
+    #[test]
+    fn portable_agent_profile_parses() {
+        let config: AgentConfig = toml::from_str(
+            r#"
+runtime_profile = "portable_sbc"
+context_window_tokens = 4096
+ai_runtime_boundary = "external_runtime"
+voice_runtime_boundary = "disabled"
+home_runtime_boundary = "external_runtime"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.runtime_profile, AgentRuntimeProfile::PortableSbc);
+        assert_eq!(config.context_window_tokens, 4096);
+        assert_eq!(config.voice_runtime_boundary, RuntimeBoundaryMode::Disabled);
+    }
+
+    #[test]
+    fn optional_ai_provider_is_disabled_and_limited_context_by_default() {
+        let config = test_config();
+        assert!(!config.optional_ai_provider.enabled);
+        assert_eq!(
+            config.optional_ai_provider.provider,
+            OptionalAiProviderKind::OpenAiCompatible
+        );
+        assert!(config.optional_ai_provider.limited_context_compatible(&config.agent));
+        assert!(!config.optional_ai_provider.production_candidate(&config.agent));
+    }
+
+    #[test]
+    fn optional_ai_provider_must_fit_limited_context() {
+        let agent = AgentConfig::default();
+        let provider: OptionalAiProviderConfig = toml::from_str(
+            r#"
+enabled = true
+provider = "open_ai"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+context_window_tokens = 8192
+allow_remote_base_url = true
+"#,
+        )
+        .unwrap();
+
+        assert!(!provider.limited_context_compatible(&agent));
+        assert!(!provider.production_candidate(&agent));
+    }
+
+    #[test]
+    fn optional_ai_provider_remote_requires_explicit_allow() {
+        let agent = AgentConfig::default();
+        let provider: OptionalAiProviderConfig = toml::from_str(
+            r#"
+enabled = true
+provider = "custom"
+base_url = "https://provider.example/v1"
+api_key_env = "GENIE_PROVIDER_KEY"
+context_window_tokens = 4096
+allow_remote_base_url = false
+"#,
+        )
+        .unwrap();
+
+        assert!(provider.limited_context_compatible(&agent));
+        assert!(!provider.production_candidate(&agent));
     }
 
     #[test]
@@ -1643,7 +1924,7 @@ device_path = "/dev/spidev1.0"
 }
 
 mod defaults {
-    use super::{LlmBackendKind, ServiceEndpoint};
+    use super::{LlmBackendKind, RuntimeBoundaryMode, ServiceEndpoint};
     use std::path::PathBuf;
 
     pub fn api_service() -> ServiceEndpoint {
@@ -1692,6 +1973,21 @@ mod defaults {
     }
     pub fn core_bind_host() -> String {
         "127.0.0.1".into()
+    }
+    pub fn agent_context_window_tokens() -> u32 {
+        4096
+    }
+    pub fn agent_ai_boundary() -> RuntimeBoundaryMode {
+        RuntimeBoundaryMode::ExternalRuntime
+    }
+    pub fn agent_voice_boundary() -> RuntimeBoundaryMode {
+        RuntimeBoundaryMode::TransitionalAdapter
+    }
+    pub fn agent_home_boundary() -> RuntimeBoundaryMode {
+        RuntimeBoundaryMode::TransitionalAdapter
+    }
+    pub fn optional_ai_provider_api_key_env() -> String {
+        "GENIEPOD_AI_PROVIDER_API_KEY".into()
     }
     pub fn llm_model_name() -> String {
         "phi".into()
