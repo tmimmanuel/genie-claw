@@ -416,7 +416,13 @@ impl Memory {
 
         // Update recall tracking for returned results.
         for (entry, score) in &scored {
-            let _ = self.update_recall_tracking(entry.id, now, *score, &query_hash);
+            if let Err(error) = self.update_recall_tracking(entry.id, now, *score, &query_hash) {
+                tracing::error!(
+                    memory_id = entry.id,
+                    error = %error,
+                    "memory recall tracking update failed"
+                );
+            }
         }
 
         Ok(scored.into_iter().map(|(e, _)| e).collect())
@@ -471,7 +477,13 @@ impl Memory {
 
         for entry in &entries {
             let score = lexical_overlap_score(query, &entry.content);
-            let _ = self.update_recall_tracking(entry.id, now, score, query_hash);
+            if let Err(error) = self.update_recall_tracking(entry.id, now, score, query_hash) {
+                tracing::error!(
+                    memory_id = entry.id,
+                    error = %error,
+                    "memory recall tracking update failed"
+                );
+            }
         }
 
         Ok(entries)
