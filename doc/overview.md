@@ -28,9 +28,9 @@ contract rather than redefine the product.
 The long-term Genie stack is split by responsibility:
 
 - custom Jetson hardware
-- `genie-os` for custom L4T, drivers, OTA, diagnostics, and service supervision
-- `genie-voice-runtime` for wake/VAD/STT/TTS/audio streaming and voice session events
-- `genie-home-runtime` for device graph, automations, MCP, and final actuation safety
+- a platform/OS layer for custom L4T, drivers, OTA, diagnostics, and service supervision
+- an external voice boundary for wake/VAD/STT/TTS/audio streaming and voice session events
+- an external home boundary for device graph, automations, MCP, and final actuation safety
 - `genie-ai-runtime` for Jetson-only LLM inference optimization
 - `genie-claw` for agent policy, memory, tools, skills, smart-home intent, and interaction
 - web/mobile apps for setup, control, memory management, and confirmations
@@ -54,8 +54,8 @@ For the exact implemented/partial/planned breakdown, use
 [implementation-status.md](implementation-status.md). In short, this repo
 implements the agent runtime, memory, tools, a transitional voice adapter,
 local HTTP/CLI surfaces, safety gates, and deploy assets. It does not implement
-the final `genie-voice-runtime`, `genie-home-runtime`, `genie-ai-runtime`,
-`genie-os`, or full Matter/Thread device stack.
+the final voice runtime, home runtime, `genie-ai-runtime`, platform/OS layer,
+or full Matter/Thread device stack.
 
 ## Main Runtime Modes
 
@@ -69,7 +69,7 @@ the final `genie-voice-runtime`, `genie-home-runtime`, `genie-ai-runtime`,
    daemon-only behavior.
 3. Voice mode
    Enabled by config, `--voice`, or `GENIEPOD_VOICE=1`. Today this still uses a
-   transitional in-repo voice path. Long term, `genie-voice-runtime` owns
+   transitional in-repo voice path. Long term, the external voice boundary owns
    microphone -> STT and TTS -> speaker, while GenieClaw owns transcript ->
    prompt/tool execution -> response text.
 
@@ -104,7 +104,7 @@ Target topology:
 genie-ai-runtime
         ^
         |
-genie-voice-runtime
+external voice boundary
         ^
         |
 genie-claw
@@ -112,10 +112,10 @@ genie-claw
         +---- web/mobile apps and local channels
         +---- memory, tools, skills
         v
-genie-home-runtime
+external home boundary
         |
         v
-GenieOS + custom Jetson hardware
+platform/OS + custom Jetson hardware
 ```
 
 The target home runtime owns direct local IoT interfaces and the final physical

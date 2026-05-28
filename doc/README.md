@@ -11,7 +11,7 @@ repo boundary inside the larger Genie ecosystem:
 - core subsystems such as memory, voice, security, and connectivity
 - deployment assets and operational guidance
 - repository layout and code ownership map
-- long-term boundary with `genie-os`, `genie-voice-runtime`, `genie-home-runtime`, `genie-ai-runtime`, and app layers
+- long-term boundary with platform/OS, voice, home, `genie-ai-runtime`, and app layers
 
 Where current code is transitional, the docs call that out explicitly.
 
@@ -59,7 +59,7 @@ being deleted or moved abruptly.
 - [../LOW_LATENCY_HOME_AGENT.md](../LOW_LATENCY_HOME_AGENT.md): low-latency private home-agent product goal
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): Genie ecosystem and repo-boundary architecture
 - [../CODEBASE.md](../CODEBASE.md): broader code walkthrough
-- [../CONNECTIVITY.md](../CONNECTIVITY.md): ESP32-C6 boundary and split with `genie-os`
+- [../CONNECTIVITY.md](../CONNECTIVITY.md): ESP32-C6 boundary and split with the platform/OS layer
 - [../VECTOR_MEMORY.md](../VECTOR_MEMORY.md): vector-memory design and rollout guidance
 - Local-only `ROADMAP.md`, if present: private product and execution planning
 - [../skills/SKILL-DEVELOPER-GUIDE.md](../skills/SKILL-DEVELOPER-GUIDE.md): native skill authoring
@@ -76,6 +76,6 @@ There are a few intentional limits:
 - `genie-ai-runtime`, `llama.cpp`, Home Assistant, Piper, Whisper, and Telegram
   Bot API internals are external dependencies. This repo documents how
   GenieClaw integrates with them, not their full upstream behavior.
-- `genie-os`, `genie-voice-runtime`, `genie-home-runtime`, and
+- The platform/OS layer, external voice boundary, external home boundary, and
   `genie-ai-runtime` are documented as architectural boundaries unless code in
   this repo already implements a client or transitional adapter.

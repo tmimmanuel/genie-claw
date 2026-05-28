@@ -37,10 +37,10 @@ profiles, but the agent contract should remain usable and testable.
 |-------|-------|-------|
 | Agent layer | `genie-claw` | Prompt policy, limited-context harness, memory, tools, skills, smart-home intent, safety, audit, channels |
 | LLM runtime | [`genie-ai-runtime`](https://github.com/GeniePod/genie-ai-runtime) | Jetson-first local inference runtime; `llama.cpp` remains selectable |
-| Voice runtime | [`genie-voice-runtime`](https://github.com/GeniePod/genie-voice-runtime) | Wake, VAD, STT, TTS, audio streaming, voice session protocol |
-| Home runtime | `genie-home-runtime` | Planned AI-native device graph, local IoT boundary, and final actuation gate |
-| Home Assistant | Transitional provider | Current integration target until `genie-home-runtime` exists |
-| OS and apps | External layers | `genie-os`, web, and mobile surfaces stay outside this repo |
+| Voice boundary | External/runtime layer | Wake, VAD, STT, TTS, audio streaming, voice session protocol |
+| Home boundary | External/runtime layer | AI-native device graph, local IoT boundary, and final actuation gate |
+| Home Assistant | Transitional provider | Current integration target behind the home-provider boundary |
+| Platform and apps | External layers | OS/platform, web, and mobile surfaces stay outside this repo |
 
 Full stack shape:
 
@@ -54,13 +54,13 @@ user channel / voice runtime
     |        |        |
     v        v        v
 genie-ai-runtime   Home Assistant today
-                   genie-home-runtime later
+                   native home boundary later
 ```
 
 ## What Works Today
 
 - local chat through `genie-core`
-- transitional voice-session adapter while voice moves to `genie-voice-runtime`
+- transitional voice-session adapter while voice/audio moves behind an external boundary
 - LLM backend facade for `genie-ai-runtime` and selectable `llama.cpp`
 - SQLite conversation history and policy-aware family/household memory
 - Home Assistant adapter with confirmations, rate limits, and audit logging
@@ -79,8 +79,8 @@ Current workspace version: `v1.0.0-alpha.9`.
 - keep the agent fast and reliable inside a 4096-token Jetson context
 - tune the AI harness around high-signal home context, family memory, and typed tools
 - improve accuracy through deterministic device state and memory retrieval, not larger prompts
-- split long-term wake/VAD/STT/TTS ownership into `genie-voice-runtime`
-- keep Home Assistant behind a provider boundary until `genie-home-runtime`
+- split long-term wake/VAD/STT/TTS ownership behind an external voice boundary
+- keep Home Assistant behind a provider boundary during the transition
 - use optional API/OAuth providers only for testing, development portability, and transitional validation
 - keep maintained SBC profiles, laptops, and Macs usable without making Jetson less native
 

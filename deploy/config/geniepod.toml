@@ -11,8 +11,8 @@ runtime_profile = "jetson"        # "jetson", "raspberry_pi", "portable_sbc", "l
                                   # home-provider boundaries.
 context_window_tokens = 4096      # Non-negotiable Jetson baseline before any adaptive larger context.
 ai_runtime_boundary = "external_runtime"       # genie-ai-runtime owns inference.
-voice_runtime_boundary = "transitional_adapter" # In-repo voice path is temporary; target is genie-voice-runtime.
-home_runtime_boundary = "transitional_adapter"  # HA provider today; target is genie-home-runtime.
+voice_runtime_boundary = "transitional_adapter" # In-repo voice path is temporary; target is the external voice boundary.
+home_runtime_boundary = "transitional_adapter"  # HA provider today; target is the external home boundary.
 
 # Optional API/OAuth provider path. Disabled by default so the local Jetson
 # image and binary stay focused on genie-ai-runtime. This exists for better

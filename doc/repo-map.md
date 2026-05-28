@@ -72,7 +72,7 @@ default and exist only for development, testing, and transitional validation.
 - `ha/policy.rs`
 
 This is the current home-runtime adapter. It points at Home Assistant today and
-should point at `genie-home-runtime` later.
+should point at the external home boundary later.
 
 ### Tools
 

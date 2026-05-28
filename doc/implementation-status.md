@@ -28,7 +28,7 @@ Status labels:
 | Home action safety in agent layer | Implemented | `crates/genie-core/src/tools/actuation.rs`, `crates/genie-core/src/ha/policy.rs` | Origin allowlist, target confidence thresholds, sensitive-action confirmation tokens, rate limits, action ledger, bounded undo, and append-only audit log. |
 | Runtime contract | Implemented | `crates/genie-core/src/runtime_contract.rs`, `crates/genie-core/src/server.rs` | Prompt/tool/policy/hydration fingerprints, optional drift detection, and boot contract log. |
 | Household security posture | Implemented | `crates/genie-api/src/routes.rs`, `crates/genie-core/src/security/*` | Dashboard exposes redacted posture instead of raw config. Security helpers include audit, credential isolation, env sanitization, injection scanning, loop guard, sandbox helpers, and taint tracking. |
-| Voice pipeline modules | Transitional | `crates/genie-core/src/voice_loop.rs`, `crates/genie-core/src/voice/*` | Current Jetson alpha bring-up path. Long-term ownership belongs in `genie-voice-runtime`; GenieClaw should consume transcripts and issue speak commands rather than own wake/VAD/STT/TTS/audio. |
+| Voice pipeline modules | Transitional | `crates/genie-core/src/voice_loop.rs`, `crates/genie-core/src/voice/*` | Current Jetson alpha bring-up path. Long-term ownership belongs behind an external voice boundary; GenieClaw should consume transcripts and issue speak commands rather than own wake/VAD/STT/TTS/audio. |
 | Optional local speaker identity | Implemented | `crates/genie-core/src/voice/identity.rs`, `crates/genie-ctl/src/main.rs` | Local WAV-derived profile enrollment/matching and voice memory-context routing. This is household routing, not hostile-user authentication. |
 | Native skill loading | Implemented | `crates/genie-core/src/skills/*`, `crates/genie-skill-sdk/*` | Loads native `.so` skills through a narrow ABI, exposes skills as tools, and audits sidecar manifest metadata. |
 | Skill policy | Implemented | `crates/genie-common/src/config.rs`, `crates/genie-core/src/skills/loader.rs` | Can require manifests, require signature material presence, and deny permission labels. Cryptographic signature verification is not implemented. |
@@ -41,24 +41,24 @@ Status labels:
 
 | Area | Status | What Exists | What Is Still Missing |
 | --- | --- | --- | --- |
-| Home Assistant integration | Partial / transitional | Provider boundary, status/control/history/undo, local action safety, HA token/config path | Home Assistant is not reimplemented in Rust here. Final device graph, automations, and deterministic physical safety belong in `genie-home-runtime`. |
+| Home Assistant integration | Partial / transitional | Provider boundary, status/control/history/undo, local action safety, HA token/config path | Home Assistant is not reimplemented in Rust here. Final device graph, automations, and deterministic physical safety belong behind an external home boundary. |
 | LLM runtime | External / integrated | `crates/genie-core/src/llm/*`, `deploy/systemd/genie-ai-runtime.service`, `[services.llm].backend = "genie_ai_runtime"` | Jetson deploys default to the external `genie-ai-runtime` on `:8080`; `llama.cpp` remains a selectable fallback/development backend. OpenAI-compatible/API/OAuth providers are transitional development and testing adapters only. |
 | Voice multilingual support | Partial | STT language hint/auto mode, language detection, and optional per-language Piper model selection | Full quality for Chinese, Spanish, German, etc. depends on installed Whisper/Piper models and device testing. It is not a certified full-language product yet. |
 | Speaker recognition | Partial | Local acoustic fingerprints from WAV profiles and runtime matching | Not robust biometric authentication, anti-spoofing, enrollment UX, or security-grade identity. |
-| ESP32-C6 connectivity | Partial boundary | Config, status endpoint, capability model, UART path validation, Thread/Matter capability intent | No real UART protocol controller, no Thread/Matter stack, no ESP-Hosted-NG implementation in this repo. ESP-Hosted-NG belongs in `genie-os`; protocol ownership belongs in `genie-home-runtime`/connectivity services. |
+| ESP32-C6 connectivity | Partial boundary | Config, status endpoint, capability model, UART path validation, Thread/Matter capability intent | No real UART protocol controller, no Thread/Matter stack, no ESP-Hosted-NG implementation in this repo. ESP-Hosted-NG belongs in the platform/OS layer; protocol ownership belongs in external home/connectivity services. |
 | Native skill security | Partial | ABI boundary, manifest audit, configurable load policy, signature material presence check | No cryptographic signature verification, process isolation, syscall sandbox, marketplace, or full permission broker. |
 | Memory dashboard | Partial / implemented admin surface | HTTP endpoints and dashboard proxy for list/update/delete/reorder | Product-grade UI/UX, conflict resolution, and multi-device sync are app-layer work. |
 | Web/mobile application layer | Partial | Lightweight local dashboard and chat UI | Full installer, setup, mobile app, push notifications, and polished memory manager are not implemented here. |
-| OTA/update flow | Partial | Update-check module and CLI command | Full signed OTA channels, rollback, fleet management, and image-level update ownership belong to `genie-os`. |
+| OTA/update flow | Partial | Update-check module and CLI command | Full signed OTA channels, rollback, fleet management, and image-level update ownership belong to the platform/OS layer. |
 
 ## Not Implemented In This Repo
 
 | Area | Status | Correct Owner |
 | --- | --- | --- |
-| `genie-home-runtime` | Planned / separate repo | Rust AI-native home automation engine, device graph, automations, MCP server, deterministic final physical safety layer. |
+| External home boundary | Planned | AI-native home automation engine, device graph, automations, MCP/server API, deterministic final physical safety layer. |
 | `genie-ai-runtime` | External / separate repo | Jetson-only inference runtime, CUDA kernels, memory planner, and OpenAI-compatible serving surface. GenieClaw owns the client contract, not the runtime implementation. |
-| `genie-voice-runtime` | Initial / separate repo | External voice runtime for wake, VAD, STT, TTS, audio streaming, and voice session protocol. |
-| `genie-os` | Planned / separate repo | Custom L4T image, board bring-up, drivers, OTA base image, service supervision, ESP-Hosted-NG OS integration. |
+| External voice boundary | Initial / planned | External voice runtime for wake, VAD, STT, TTS, audio streaming, and voice session protocol. |
+| Platform/OS layer | Planned | Custom L4T image, board bring-up, drivers, OTA base image, service supervision, ESP-Hosted-NG OS integration. |
 | Full Matter/Thread/Zigbee/BLE production stack | Planned outside this repo | Lower connectivity/home-runtime layers. |
 | Full vector/cuVS semantic memory backend | Planned design only | `VECTOR_MEMORY.md` describes the rollout. Current runtime uses SQLite FTS, not embeddings/vector search. |
 | Cryptographic skill signing and sandboxed marketplace | Planned | Later signed skill platform. Current code only audits manifests and signature material presence. |

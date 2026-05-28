@@ -108,9 +108,10 @@ GenieClaw should not become a wireless driver stack, but it should integrate
 with a first-party local device graph and actuation boundary. The target split
 is:
 
-- `genie-os` owns radios, Linux interfaces, drivers, and service supervision.
-- `genie-home-runtime` owns device graph, Matter/Thread/Zigbee/BLE adapters,
-  automations, and final physical actuation safety.
+- The platform/OS layer owns radios, Linux interfaces, drivers, and service
+  supervision.
+- The external home boundary owns device graph, Matter/Thread/Zigbee/BLE
+  adapters, automations, and final physical actuation safety.
 - `genie-claw` owns user intent, memory, policy, confirmations, audit, and
   tool routing.
 

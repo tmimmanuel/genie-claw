@@ -14,7 +14,7 @@ The original target remains specific:
 - GeniePod Home on Jetson-class hardware
 - local-first voice interaction
 - `genie-ai-runtime` as the flagship local LLM runtime
-- Home Assistant today, `genie-home-runtime` as the longer-term home boundary
+- Home Assistant today, external home boundary as the longer-term direction
 - private memory, safety gates, audit trails, and bounded physical actuation
 - small context windows because VRAM and latency are tight on edge hardware
 
