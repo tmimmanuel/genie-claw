@@ -4,13 +4,17 @@
 [![Jetson cross-compile](https://github.com/GeniePod/genie-claw/actions/workflows/cross.yml/badge.svg)](https://github.com/GeniePod/genie-claw/actions/workflows/cross.yml)
 [![Audit](https://github.com/GeniePod/genie-claw/actions/workflows/audit.yml/badge.svg)](https://github.com/GeniePod/genie-claw/actions/workflows/audit.yml)
 
-**Limited-context AI harness for agentic smart homes: portable across SBCs and
-native to GeniePod Home.**
+**Low-latency, limited-context AI harness for private on-device homes: portable
+across SBCs and native to GeniePod Home.**
 
 GenieClaw is the Rust agent layer for GeniePod Home. It is built for small local
 models, tight VRAM budgets, and a 4096-token Jetson baseline. This repo owns
 prompt assembly, memory, tool routing, smart-home intent, safety policy, audit,
 and channel/session adapters.
+
+The product goal is a private household agent that is fast because it receives
+the right family memory, room/device state, and safety context, not because it
+sends large prompts to a remote model.
 
 GenieClaw is not the voice pipeline, the LLM runtime, the OS, the final
 home-control runtime, or the product app layer.
@@ -27,7 +31,7 @@ first.
 | Agent layer | `genie-claw` | Prompt policy, limited-context harness, memory, tools, skills, smart-home intent, safety, audit, channels |
 | LLM runtime | [`genie-ai-runtime`](https://github.com/GeniePod/genie-ai-runtime) | Jetson-first local inference runtime; `llama.cpp` remains selectable |
 | Voice runtime | [`genie-voice-runtime`](https://github.com/GeniePod/genie-voice-runtime) | Wake, VAD, STT, TTS, audio streaming, voice session protocol |
-| Home runtime | `genie-home-runtime` | Planned AI-native device graph and final actuation gate |
+| Home runtime | `genie-home-runtime` | Planned AI-native device graph, local IoT boundary, and final actuation gate |
 | Home Assistant | Transitional provider | Current integration target until `genie-home-runtime` exists |
 | OS and apps | External layers | `genie-os`, web, and mobile surfaces stay outside this repo |
 
@@ -51,7 +55,7 @@ genie-ai-runtime   Home Assistant today
 - local chat through `genie-core`
 - transitional voice-session adapter while voice moves to `genie-voice-runtime`
 - LLM backend facade for `genie-ai-runtime` and selectable `llama.cpp`
-- SQLite conversation history and household memory
+- SQLite conversation history and policy-aware family/household memory
 - Home Assistant adapter with confirmations, rate limits, and audit logging
 - local HTTP API, dashboard, CLI, health service, and governor service
 - optional `web_search` tool with DuckDuckGo or SearXNG
@@ -65,11 +69,12 @@ Current workspace version: `v1.0.0-alpha.9`.
 
 ## Current Focus
 
-- keep the agent reliable inside a 4096-token Jetson context
-- harden prompt, memory, tool, and safety contracts
+- keep the agent fast and reliable inside a 4096-token Jetson context
+- tune the AI harness around high-signal home context, family memory, and typed tools
+- improve accuracy through deterministic device state and memory retrieval, not larger prompts
 - split long-term wake/VAD/STT/TTS ownership into `genie-voice-runtime`
 - keep Home Assistant behind a provider boundary until `genie-home-runtime`
-- allow optional API-key providers only when they pass the same limited-context harness
+- use optional API/OAuth providers only for testing, development portability, and transitional validation
 - keep development usable on SBCs, laptops, and Macs without making Jetson less native
 
 ## Agent Contract
@@ -86,9 +91,10 @@ The repo now has explicit code-level contract surfaces for the new direction:
   cache metadata to runtimes that understand the `nvext` extension.
 - `[agent]` in `geniepod.toml` selects the runtime profile:
   `jetson`, `raspberry_pi`, `portable_sbc`, `laptop`, or `mac`.
-- `[optional_ai_provider]` is disabled by default. API-key and OAuth-bearer
-  providers must keep their configured context at or below
-  `[agent].context_window_tokens` before they are production candidates.
+- `[optional_ai_provider]` is disabled by default. API-key, OAuth-bearer, and
+  other remote/alternate providers exist only for better testing, development
+  portability, and transitional validation; they must keep their configured
+  context at or below `[agent].context_window_tokens`.
 
 ## Quick Start
 
@@ -118,6 +124,7 @@ For Jetson setup, deployment, and Home Assistant wiring, use
 ## Documentation
 
 - [`GETTING_STARTED.md`](GETTING_STARTED.md) - local dev, Docker, Jetson bring-up, and deploy
+- [`LOW_LATENCY_HOME_AGENT.md`](LOW_LATENCY_HOME_AGENT.md) - product goal for the low-latency private home harness
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) - Genie ecosystem boundaries
 - [`doc/README.md`](doc/README.md) - documentation map
 - [`doc/implementation-status.md`](doc/implementation-status.md) - implemented, partial, external, and planned work

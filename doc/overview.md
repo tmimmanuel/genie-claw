@@ -9,14 +9,17 @@ The repo is optimized around a narrow goal:
 
 - run locally on Jetson-class hardware as the flagship target
 - preserve a 4096-token small-context baseline before larger adaptive contexts
+- favor low latency over larger default context windows
+- tune accuracy through family memory, current home state, and typed tools
 - keep the system understandable and debuggable
 - keep agent/provider/home behavior testable through deterministic harnesses
 - provide everyday household usefulness before broad platform ambition
 - preserve privacy, bounded behavior, and graceful degradation
 
 This is not a cloud orchestration shell and not a generic agent runtime. Remote
-or API-key providers can be useful optional adapters, but they must fit the
-limited-context home-agent contract rather than redefine the product.
+or API-key providers can be useful optional adapters for development, CI, and
+transitional validation, but they must fit the limited-context home-agent
+contract rather than redefine the product.
 
 ## Ecosystem Role
 
@@ -34,6 +37,11 @@ This repository is `genie-claw`. It integrates with external lower runtimes
 through narrow clients: `genie-ai-runtime` is the Jetson default LLM backend,
 `llama.cpp` remains a selectable development/fallback backend, and Home
 Assistant is the current transitional home provider.
+
+The intended accuracy path is a compact home context harness: identity and
+family facts, relevant memories, device graph slices, recent actions, and
+safety policy are selected before each turn instead of dumping raw history or
+using remote context as a shortcut.
 
 For the exact implemented/partial/planned breakdown, use
 [implementation-status.md](implementation-status.md). In short, this repo
@@ -102,6 +110,10 @@ genie-home-runtime
         v
 GenieOS + custom Jetson hardware
 ```
+
+The target home runtime owns direct local IoT interfaces and the final physical
+actuation gate. GenieClaw owns the agent decision, memory, confirmation, and
+audit layers above that boundary.
 
 ## Core User Flows
 

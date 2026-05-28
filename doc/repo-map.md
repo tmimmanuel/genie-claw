@@ -6,6 +6,7 @@
 | --- | --- |
 | `README.md` | Product summary and quick start |
 | `GETTING_STARTED.md` | Bring-up guide |
+| `LOW_LATENCY_HOME_AGENT.md` | Canonical low-latency private home-agent goal |
 | `ARCHITECTURE.md` | Genie ecosystem and repo-boundary architecture |
 | `CODEBASE.md` | Narrative code walkthrough |
 | `CONNECTIVITY.md` | ESP32-C6 boundary and ownership split |
@@ -56,7 +57,7 @@
 This is the LLM backend facade. Jetson deploys default to the external
 `genie-ai-runtime`; `llama.cpp` remains selectable as a legacy fallback and
 development backend. Optional OpenAI-compatible providers are disabled by
-default and must pass the same limited-context harness before use.
+default and exist only for development, testing, and transitional validation.
 
 ### Prompt And Reasoning
 

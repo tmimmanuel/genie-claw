@@ -2,7 +2,9 @@
 //!
 //! The goal is to keep prompt, tools, memory hydration, safety, and optional
 //! provider paths usable inside the Jetson 4096-token baseline before any
-//! deployment opts into a larger adaptive context.
+//! deployment opts into a larger adaptive context. Low latency and answer
+//! quality should come from selecting the right home context, not from widening
+//! prompts by default.
 
 use genie_common::config::{AgentConfig, OptionalAiProviderConfig};
 use serde::Serialize;
@@ -12,7 +14,7 @@ use crate::tools::dispatch::ToolDef;
 
 pub const RESPONSE_RESERVE_TOKENS: usize = 512;
 pub const TOOL_MANIFEST_BUDGET_TOKENS: usize = 900;
-pub const MEMORY_HYDRATION_BUDGET_TOKENS: usize = 900;
+pub const MEMORY_HYDRATION_BUDGET_TOKENS: usize = 700;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct HarnessCheck {
@@ -145,6 +147,7 @@ mod tests {
 
         assert!(report.pass, "{:?}", report.checks);
         assert!(report.estimated_total_tokens < 4096);
+        assert_eq!(MEMORY_HYDRATION_BUDGET_TOKENS, 700);
     }
 
     #[test]

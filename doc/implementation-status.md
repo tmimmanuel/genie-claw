@@ -42,7 +42,7 @@ Status labels:
 | Area | Status | What Exists | What Is Still Missing |
 | --- | --- | --- | --- |
 | Home Assistant integration | Partial / transitional | Provider boundary, status/control/history/undo, local action safety, HA token/config path | Home Assistant is not reimplemented in Rust here. Final device graph, automations, and deterministic physical safety belong in `genie-home-runtime`. |
-| LLM runtime | External / integrated | `crates/genie-core/src/llm/*`, `deploy/systemd/genie-ai-runtime.service`, `[services.llm].backend = "genie_ai_runtime"` | Jetson deploys default to the external `genie-ai-runtime` on `:8080`; `llama.cpp` remains a selectable fallback/development backend. |
+| LLM runtime | External / integrated | `crates/genie-core/src/llm/*`, `deploy/systemd/genie-ai-runtime.service`, `[services.llm].backend = "genie_ai_runtime"` | Jetson deploys default to the external `genie-ai-runtime` on `:8080`; `llama.cpp` remains a selectable fallback/development backend. OpenAI-compatible/API/OAuth providers are transitional development and testing adapters only. |
 | Voice multilingual support | Partial | STT language hint/auto mode, language detection, and optional per-language Piper model selection | Full quality for Chinese, Spanish, German, etc. depends on installed Whisper/Piper models and device testing. It is not a certified full-language product yet. |
 | Speaker recognition | Partial | Local acoustic fingerprints from WAV profiles and runtime matching | Not robust biometric authentication, anti-spoofing, enrollment UX, or security-grade identity. |
 | ESP32-C6 connectivity | Partial boundary | Config, status endpoint, capability model, UART path validation, Thread/Matter capability intent | No real UART protocol controller, no Thread/Matter stack, no ESP-Hosted-NG implementation in this repo. ESP-Hosted-NG belongs in `genie-os`; protocol ownership belongs in `genie-home-runtime`/connectivity services. |
@@ -70,8 +70,13 @@ Status labels:
 The workspace version is currently `1.0.0-alpha.9`.
 
 The current alpha line defaults Jetson deployments to `genie-ai-runtime`,
-preserves the 4096-token agent harness, and keeps optional remote/API providers
-behind explicit config, credential-env, and context-budget checks.
+preserves the 4096-token agent harness, and treats optional remote/API providers
+as development/testing paths behind explicit config, credential-env, remote-URL
+opt-in, and context-budget checks.
+
+The product direction is low-latency private home AI: keep context small,
+retrieve only high-signal family memory and device state, and use typed local
+tools/home-runtime boundaries instead of relying on larger remote prompts.
 
 ## How To Keep This Page Honest
 

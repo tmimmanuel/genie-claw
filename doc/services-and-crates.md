@@ -13,6 +13,8 @@ Jetson appliance deployment, but the long-term boundary is clear:
 - Home Assistant is the current transitional home-runtime adapter.
 - `genie-ai-runtime` is the default external Jetson LLM runtime; `llama.cpp`
   remains a selectable fallback and development backend.
+- Optional OpenAI-compatible/API providers are for development portability,
+  testing, and transitional validation only.
 - Future `genie-home-runtime` should replace the Home Assistant lower-runtime adapter.
 - `genie-voice-runtime` is the new external owner for wake/VAD/STT/TTS/audio behavior.
 
@@ -182,6 +184,8 @@ Not every unit is always active. Some are optional or deployment-specific.
 ## Optional Integration Boundaries
 
 - Home Assistant: transitional provider boundary in `crates/genie-core/src/ha/`
+- Optional AI providers: disabled-by-default development/test boundary under
+  `[optional_ai_provider]`
 - Telegram: feature-gated adapter in `crates/genie-core/src/telegram.rs`
 - ESP32-C6 connectivity sidecar: boundary in `crates/genie-core/src/connectivity/`
 - Web search providers: DuckDuckGo default, optional local SearXNG

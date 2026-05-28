@@ -9,6 +9,8 @@ The practical reason is simple:
 - local inference and local voice must fit in a constrained memory budget
 - service count must stay low
 - operational behavior has to remain understandable under pressure
+- ordinary home-agent turns should stay fast by using compact prompt context,
+  relevant memory, and typed tools instead of larger remote prompts
 
 ## Deploy Assets In This Repo
 
@@ -59,6 +61,10 @@ The practical reason is simple:
 Use `deploy/config/geniepod.dev.toml` and point `genie-core` at any local
 OpenAI-compatible model server. The checked-in dev config uses `llama.cpp`
 on `:8080`.
+
+Remote/API providers can help with development and transitional validation, but
+they are not the production product path. The Jetson target remains local
+`genie-ai-runtime` plus the limited-context home harness.
 
 Main references:
 
@@ -199,6 +205,8 @@ These are current system realities, not bugs in the docs:
 - Multilingual voice depends on installed STT/TTS models and per-language device testing.
 - Vector/cuVS semantic memory is design work; the implemented memory runtime uses SQLite FTS today.
 - Web search is intentionally limited to low-risk public lookups and can be disabled completely.
+- Optional OpenAI-compatible/API/OAuth providers are for testing and development
+  portability during transition, not for replacing the private on-device path.
 
 ## Suggested Health Checks
 

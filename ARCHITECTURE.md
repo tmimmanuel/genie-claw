@@ -17,7 +17,11 @@ It sits below:
 - installer/operator tools
 - future household and developer-facing product surfaces
 
-The purpose of this repo is to make the local home AI useful, private, safe, and understandable. It should not grow into the OS, the full home automation engine, the CUDA inference runtime, or the product app.
+The purpose of this repo is to make the local home AI useful, private, safe,
+low-latency, and understandable. Accuracy should come from the right family
+memory, current home context, typed device state, and deterministic tools. It
+should not grow into the OS, the full home automation engine, the CUDA
+inference runtime, or the product app.
 
 The architectural invariant is now enforced in code as well as docs:
 
@@ -26,8 +30,9 @@ The architectural invariant is now enforced in code as well as docs:
   and optional-provider context against the Jetson 4096-token baseline.
 - `[agent]` selects the deployment profile while keeping `jetson` as the
   flagship default.
-- `[optional_ai_provider]` is opt-in and cannot become a production candidate
-  unless it remains limited-context compatible.
+- `[optional_ai_provider]` is opt-in and exists for testing, development
+  portability, and transitional validation only. It cannot bypass the
+  limited-context home-agent contract.
 
 ## Ecosystem Stack
 
@@ -40,7 +45,7 @@ GenieClaw Agent Layer
 
 Runtime Layer
   genie-voice-runtime: wake, VAD, STT, TTS, audio streaming
-  genie-home-runtime: device graph, automations, actuation safety, MCP
+  genie-home-runtime: local device graph, IoT adapters, automations, actuation safety, MCP
   genie-ai-runtime: Jetson-only LLM inference, CUDA kernels, model serving
 
 GenieOS Layer
@@ -68,7 +73,7 @@ The repo should optimize for repeated daily usefulness:
 
 - remember useful household context
 - answer and act quickly on Jetson-class hardware
-- control the home through a bounded runtime contract
+- control the home through a bounded local runtime contract
 - explain what happened
 - work when the internet is down
 
@@ -91,9 +96,9 @@ The current repo still contains pragmatic adapters used to ship on Jetson now.
 
 | Current adapter | Target boundary | Notes |
 | --- | --- | --- |
-| `genie-ai-runtime` OpenAI-compatible client (default on Jetson) | external `genie-ai-runtime` service | `llama.cpp` remains a selectable fallback/development backend. Both backends ship behind the `LlmClient` facade; per-deployment selection is via `[services.llm].backend` in `geniepod.toml`. Backend identity surfaces in `/api/health`, startup logs, and `genie-ctl status`. |
+| `genie-ai-runtime` OpenAI-compatible client (default on Jetson) | external `genie-ai-runtime` service | `llama.cpp` remains a selectable fallback/development backend. Both local backends ship behind the `LlmClient` facade; per-deployment selection is via `[services.llm].backend` in `geniepod.toml`. Backend identity surfaces in `/api/health`, startup logs, and `genie-ctl status`. |
 | In-repo voice pipeline under `crates/genie-core/src/voice/` and `voice_loop.rs` | [`genie-voice-runtime`](https://github.com/GeniePod/genie-voice-runtime) | Keep current code as a transitional Jetson bring-up path. New wake/VAD/STT/TTS/audio ownership should move to the external runtime. GenieClaw should consume transcripts and issue speak commands. |
-| Home Assistant provider | `genie-home-runtime` MCP/API client | Keep HA-specific behavior behind `ha/` and tools/home boundaries. |
+| Home Assistant provider | `genie-home-runtime` MCP/API client | Keep HA-specific behavior behind `ha/` and tools/home boundaries. Home Assistant is a transitional provider while the native local device graph and IoT boundary mature. |
 | Actuation safety in `genie-core` | final safety in `genie-home-runtime` | Keep current safety as an agent-side guard and confirmation layer. |
 | `genie-api` dashboard | application layer | Keep it operational and lightweight; avoid making it the long-term product app. |
 | `genie-governor` service lifecycle | GenieOS/system supervisor | Keep it useful for Jetson bring-up while OS ownership matures. |
@@ -214,9 +219,9 @@ contract portable enough for development and review on non-Jetson hardware.
 
 ## Optional Providers
 
-API-key AI providers are optional provider boundaries, not the default product
-runtime. They must satisfy all of these before being treated as production
-paths:
+API-key, OAuth-bearer, and OpenAI-compatible AI providers are optional
+development and transitional validation boundaries, not the product runtime.
+They must satisfy all of these before being used for serious test coverage:
 
 - configured under `[optional_ai_provider]`, disabled by default
 - API key comes from an environment variable, not the TOML value itself
@@ -225,8 +230,26 @@ paths:
 - prompt/tool/memory budget passes `genie_core::agent_harness`
 
 The flagship path remains local `genie-ai-runtime` on Jetson. Optional providers
-exist to make development, CI, and non-Jetson deployments easier without
-weakening the limited-context home-agent contract.
+exist to make development, CI, and non-Jetson testing easier during the
+transition. They must not become a reason to increase context by default, send
+household memory remotely by default, or weaken the limited-context home-agent
+contract.
+
+## Low-Latency Home Harness
+
+The harness should optimize for small, high-signal context rather than larger
+model inputs. A normal turn should assemble only:
+
+- compact policy and role instructions
+- the relevant family/speaker context
+- top-k memory facts
+- current room or device graph slice
+- recent action summary when it helps explain or undo behavior
+- the smallest useful tool manifest
+
+The LLM should not receive raw history, every memory, or stale device state.
+The agent should use deterministic quick routes and typed tools for repeated
+daily tasks before spending model tokens.
 
 ## Memory Ownership
 
@@ -280,9 +303,10 @@ The clean architecture path is incremental:
 
 1. Make boundary language consistent in docs and config.
 2. Keep Home Assistant and LLM backends behind narrow adapter traits (LLM side resolved via the `LlmClient` facade in `crates/genie-core/src/llm/`).
-3. Move physical actuation authority downward into `genie-home-runtime` when it exists.
-4. Keep Jetson model-server specialization in `genie-ai-runtime`.
-5. Move voice/audio pipeline ownership downward into `genie-voice-runtime`.
-6. Keep GenieClaw focused on agent policy, memory, skills, tools, channels, and household interaction.
+3. Tune the prompt/memory/tool harness for low-latency household context.
+4. Move physical actuation authority and direct local IoT/device graph ownership downward into `genie-home-runtime` when it exists.
+5. Keep Jetson model-server specialization in `genie-ai-runtime`.
+6. Move voice/audio pipeline ownership downward into `genie-voice-runtime`.
+7. Keep GenieClaw focused on agent policy, memory, skills, tools, channels, and household interaction.
 
 This prevents the agent repo from becoming a single large mixed runtime while still allowing today’s Jetson appliance to keep working.

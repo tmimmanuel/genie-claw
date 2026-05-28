@@ -1,6 +1,7 @@
 # Vector Memory Design
 
-Design note for adding semantic retrieval to GenieClaw without breaking the current Jetson-first architecture.
+Design note for adding semantic retrieval to GenieClaw without breaking the
+current Jetson-first, low-latency home-agent architecture.
 
 This document answers a specific question:
 
@@ -19,6 +20,7 @@ GenieClaw should instead:
 3. treat GPU vector search as an optional backend
 4. prefer borrowing ideas and interface patterns before copying code
 5. only reuse code in small, auditable pieces with preserved license notices
+6. inject fewer, better family/household facts instead of increasing prompt size
 
 This keeps the appliance path stable on Jetson while still allowing higher-end vector retrieval later.
 
@@ -316,6 +318,10 @@ For a semantic-enabled memory query:
 8. inject only the short, high-signal results into prompt context
 
 The core design point is that vector search returns candidates. GenieClaw still owns the final ranking.
+
+Semantic retrieval must serve the low-latency home harness. It is successful
+only if it improves the quality of the few facts injected into context; it
+should not become an excuse to send more memory to the model.
 
 ## Code Reuse Policy
 

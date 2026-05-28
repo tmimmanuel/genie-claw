@@ -1,8 +1,9 @@
 //! Runtime boundary contracts for the GenieClaw agent layer.
 //!
-//! GenieClaw owns agent policy, prompt assembly, memory, tools, channels, and
-//! audit. It consumes lower runtime contracts for inference, voice I/O, and
-//! physical home control; it should not grow into those runtimes.
+//! GenieClaw owns agent policy, prompt assembly, family memory, tools,
+//! channels, and audit for a low-latency private home agent. It consumes lower
+//! runtime contracts for inference, voice I/O, and physical home control; it
+//! should not grow into those runtimes.
 
 use genie_common::config::{
     AgentConfig, AgentRuntimeProfile, OptionalAiProviderConfig, RuntimeBoundaryMode,
@@ -131,6 +132,6 @@ mod tests {
         };
 
         assert!(!provider_respects_agent_context(&provider, &agent));
-        assert!(!provider.production_candidate(&agent));
+        assert!(!provider.transitional_test_candidate(&agent));
     }
 }
