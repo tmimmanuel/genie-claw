@@ -1686,6 +1686,21 @@ mod tests {
     }
 
     #[test]
+    fn core_defaults_match_current_jetson_runtime() {
+        let config = test_config();
+        assert_eq!(config.core.llm_model_name, "qwen");
+        assert_eq!(
+            config.core.llm_model_path,
+            PathBuf::from("/opt/geniepod/models/Qwen3-4B-Q4_K_M.gguf")
+        );
+        assert_eq!(
+            config.core.whisper_model,
+            PathBuf::from("/opt/geniepod/models/ggml-small.bin")
+        );
+        assert!(config.core.wakeword_script.as_os_str().is_empty());
+    }
+
+    #[test]
     fn portable_agent_profile_parses() {
         let config: AgentConfig = toml::from_str(
             r#"
@@ -2622,10 +2637,10 @@ mod defaults {
         "GENIEPOD_AI_PROVIDER_OAUTH_TOKEN".into()
     }
     pub fn llm_model_name() -> String {
-        "phi".into()
+        "qwen".into()
     }
     pub fn whisper_model() -> PathBuf {
-        PathBuf::from("/opt/geniepod/models/whisper-small.bin")
+        PathBuf::from("/opt/geniepod/models/ggml-small.bin")
     }
     pub fn piper_model() -> PathBuf {
         PathBuf::from("/opt/geniepod/voices/en_US-amy-medium.onnx")
@@ -2661,9 +2676,9 @@ mod defaults {
         "auto".into()
     }
     pub fn audio_denoiser() -> String {
-        // alpha.7 default: try the neural denoiser first. Runtime falls back to
-        // sox then none if the binary is absent, so this is safe even on hosts
-        // that have not run the alpha.7 setup-jetson.sh yet.
+        // Try the neural denoiser first. Runtime falls back to sox then none
+        // if the binary is absent, so this is safe on hosts that have not run
+        // the full Jetson setup script yet.
         "deepfilternet".into()
     }
     pub fn deep_filter_path() -> PathBuf {
@@ -2689,10 +2704,10 @@ mod defaults {
         3
     }
     pub fn llm_model_path() -> PathBuf {
-        PathBuf::from("/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf")
+        PathBuf::from("/opt/geniepod/models/Qwen3-4B-Q4_K_M.gguf")
     }
     pub fn wakeword_script() -> PathBuf {
-        PathBuf::from("/opt/geniepod/bin/genie-wake-listen.py")
+        PathBuf::new()
     }
     pub fn speaker_identity_confidence() -> String {
         "high".into()

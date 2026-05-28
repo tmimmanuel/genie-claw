@@ -47,11 +47,16 @@
 ### LLM
 
 - `llm/mod.rs`
-- `llm/client.rs`
-- `llm/retry.rs`
+- `llm/openai_compat.rs`
+- `llm/genie_ai_runtime.rs`
+- `llm/llama_cpp.rs`
+- `llm/openai_compatible.rs`
+- `llm/provider.rs`
 
-This is the current AI-runtime adapter. It points at `llama.cpp` today and
-should point at `genie-ai-runtime` later.
+This is the LLM backend facade. Jetson deploys default to the external
+`genie-ai-runtime`; `llama.cpp` remains selectable as a legacy fallback and
+development backend. Optional OpenAI-compatible providers are disabled by
+default and must pass the same limited-context harness before use.
 
 ### Prompt And Reasoning
 
@@ -135,6 +140,10 @@ Current integration-style tests outside `src/`:
 
 - `crates/genie-core/tests/tool_dispatch_test.rs`
 - `crates/genie-core/tests/tools_test.rs`
+- `crates/genie-core/tests/memory_recall.rs`
+- `crates/genie-core/tests/prompt_sha_test.rs`
+- `crates/genie-core/tests/tool_gate_integration_test.rs`
+- `crates/genie-core/tests/voice_loop_integration.rs`
 
 Most other tests are colocated unit tests inside the module files.
 

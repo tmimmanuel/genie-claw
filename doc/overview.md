@@ -30,9 +30,10 @@ The long-term Genie stack is split by responsibility:
 - `genie-claw` for agent policy, memory, tools, skills, smart-home intent, and interaction
 - web/mobile apps for setup, control, memory management, and confirmations
 
-This repository is `genie-claw`. Some current integrations still live here as
-transitional adapters, especially `llama.cpp` and Home Assistant, but the code
-should keep those behind narrow boundaries.
+This repository is `genie-claw`. It integrates with external lower runtimes
+through narrow clients: `genie-ai-runtime` is the Jetson default LLM backend,
+`llama.cpp` remains a selectable development/fallback backend, and Home
+Assistant is the current transitional home provider.
 
 For the exact implemented/partial/planned breakdown, use
 [implementation-status.md](implementation-status.md). In short, this repo
@@ -64,7 +65,7 @@ In daemon mode, Telegram can also be enabled as a side-channel adapter.
 Typical Jetson deployment:
 
 ```text
-llama-server (:8080)
+genie-ai-runtime (:8080)
         ^
         |
 genie-core (:3000) <---- genie-ctl
@@ -73,6 +74,9 @@ genie-core (:3000) <---- genie-ctl
         +---- optional Telegram adapter
         +---- optional Home Assistant provider
         +---- optional ESP32-C6 connectivity controller boundary
+
+Selectable fallback: llama.cpp `llama-server` can also serve the same
+OpenAI-compatible LLM endpoint on `:8080`.
 
 genie-governor ---- controls service modes and pressure response
 genie-health   ---- polls health endpoints and stores health history

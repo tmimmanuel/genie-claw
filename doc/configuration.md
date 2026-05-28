@@ -343,7 +343,7 @@ Operational variables used by systemd/deploy surfaces outside the Rust config:
 
 | Variable | Purpose |
 | --- | --- |
-| `GENIEPOD_LLM_MODEL` | Model path used by `genie-llm.service` / `llama-server` |
+| `GENIEPOD_LLM_MODEL` | Model path used by the active local LLM unit (`genie-ai-runtime.service` by default, or `genie-llm.service` for llama.cpp fallback) |
 
 ## Config Resolution Rules
 

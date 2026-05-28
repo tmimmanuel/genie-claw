@@ -8,7 +8,7 @@ This repository should be understood as the Rust agent runtime that sits above:
 - GenieOS, the custom L4T and system image layer
 - `genie-voice-runtime`, the external voice runtime for wake/VAD/STT/TTS/audio
 - `genie-home-runtime`, the future AI-native home automation runtime
-- `genie-ai-runtime`, the future Jetson-only LLM inference runtime
+- `genie-ai-runtime`, the external Jetson-first LLM inference runtime
 
 It sits below:
 
@@ -89,9 +89,9 @@ This repo can keep transitional implementations while those layers are still for
 
 The current repo still contains pragmatic adapters used to ship on Jetson now.
 
-| Current adapter | Long-term replacement | Notes |
+| Current adapter | Target boundary | Notes |
 | --- | --- | --- |
-| `genie-ai-runtime` OpenAI-compatible client (default on Jetson) | `llama.cpp` client (selectable fallback) | Both backends ship behind the `LlmClient` facade; per-deployment selection via `[services.llm].backend` in `geniepod.toml`. Backend identity surfaces in `/api/health`, startup logs, and `genie-ctl status`. |
+| `genie-ai-runtime` OpenAI-compatible client (default on Jetson) | external `genie-ai-runtime` service | `llama.cpp` remains a selectable fallback/development backend. Both backends ship behind the `LlmClient` facade; per-deployment selection is via `[services.llm].backend` in `geniepod.toml`. Backend identity surfaces in `/api/health`, startup logs, and `genie-ctl status`. |
 | In-repo voice pipeline under `crates/genie-core/src/voice/` and `voice_loop.rs` | [`genie-voice-runtime`](https://github.com/GeniePod/genie-voice-runtime) | Keep current code as a transitional Jetson bring-up path. New wake/VAD/STT/TTS/audio ownership should move to the external runtime. GenieClaw should consume transcripts and issue speak commands. |
 | Home Assistant provider | `genie-home-runtime` MCP/API client | Keep HA-specific behavior behind `ha/` and tools/home boundaries. |
 | Actuation safety in `genie-core` | final safety in `genie-home-runtime` | Keep current safety as an agent-side guard and confirmation layer. |
@@ -281,7 +281,7 @@ The clean architecture path is incremental:
 1. Make boundary language consistent in docs and config.
 2. Keep Home Assistant and LLM backends behind narrow adapter traits (LLM side resolved via the `LlmClient` facade in `crates/genie-core/src/llm/`).
 3. Move physical actuation authority downward into `genie-home-runtime` when it exists.
-4. Move Jetson model-server specialization downward into `genie-ai-runtime`.
+4. Keep Jetson model-server specialization in `genie-ai-runtime`.
 5. Move voice/audio pipeline ownership downward into `genie-voice-runtime`.
 6. Keep GenieClaw focused on agent policy, memory, skills, tools, channels, and household interaction.
 

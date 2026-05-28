@@ -10,8 +10,10 @@ Jetson appliance deployment, but the long-term boundary is clear:
 - `genie-core` is the agent runtime.
 - `genie-api` is a lightweight local dashboard/status service, not the final product app.
 - `genie-governor` and `genie-health` are appliance support services.
-- Home Assistant and `llama.cpp` are transitional lower-runtime adapters.
-- Future `genie-home-runtime` and `genie-ai-runtime` should replace those lower-runtime adapters.
+- Home Assistant is the current transitional home-runtime adapter.
+- `genie-ai-runtime` is the default external Jetson LLM runtime; `llama.cpp`
+  remains a selectable fallback and development backend.
+- Future `genie-home-runtime` should replace the Home Assistant lower-runtime adapter.
 - `genie-voice-runtime` is the new external owner for wake/VAD/STT/TTS/audio behavior.
 
 For the current truth matrix, see
@@ -137,7 +139,8 @@ Key files:
 ### Network Endpoints
 
 - `genie-core`: `:3000`
-- `llama-server`: `:8080` today; future replacement is `genie-ai-runtime`
+- LLM backend: `:8080`; Jetson default is `genie-ai-runtime`, fallback/dev is
+  `llama.cpp` `llama-server`
 - Home Assistant: commonly `:8123` today; future replacement is `genie-home-runtime`
 - `genie-voice-runtime`: external voice runtime; protocol and port are still stabilizing
 - `genie-api`: separate dashboard service port, depending on deploy setup
@@ -161,10 +164,15 @@ Defined under `deploy/systemd/`:
 - `genie-api.service`
 - `genie-governor.service`
 - `genie-health.service`
+- `genie-ai-runtime.service`
+- `genie-ai-runtime-warmup.service`
 - `genie-llm.service`
+- `genie-llm-warmup.service`
 - `genie-mqtt.service`
 - `genie-audio.service`
 - `genie-wakeword.service`
+- `genie-whisper.service`
+- `genie-whisper-warmup.service`
 - `homeassistant.service`
 - `geniepod.target`
 - `geniepod-late.target`

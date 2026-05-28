@@ -23,8 +23,8 @@ const ACTUATION_RATE_WINDOW_MS: u64 = 60_000;
 
 /// Tool definition for LLM function calling.
 ///
-/// These are sent to llama.cpp as part of the system prompt or
-/// via the `tools` parameter (OpenAI function-calling format).
+/// These are sent to the configured LLM backend as part of the system prompt or
+/// via the `tools` parameter when a backend supports OpenAI function-calling.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolDef {
     pub name: String,

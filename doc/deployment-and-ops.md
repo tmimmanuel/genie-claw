@@ -25,10 +25,15 @@ The practical reason is simple:
 - `deploy/systemd/genie-api.service`
 - `deploy/systemd/genie-governor.service`
 - `deploy/systemd/genie-health.service`
+- `deploy/systemd/genie-ai-runtime.service`
+- `deploy/systemd/genie-ai-runtime-warmup.service`
 - `deploy/systemd/genie-llm.service`
+- `deploy/systemd/genie-llm-warmup.service`
 - `deploy/systemd/genie-mqtt.service`
 - `deploy/systemd/genie-audio.service`
 - `deploy/systemd/genie-wakeword.service`
+- `deploy/systemd/genie-whisper.service`
+- `deploy/systemd/genie-whisper-warmup.service`
 - `deploy/systemd/homeassistant.service`
 - `deploy/systemd/geniepod.target`
 - `deploy/systemd/geniepod-late.target`
@@ -51,8 +56,9 @@ The practical reason is simple:
 
 ### Dev Machine
 
-Use `deploy/config/geniepod.dev.toml` and point `genie-core` at a local
-`llama-server`.
+Use `deploy/config/geniepod.dev.toml` and point `genie-core` at any local
+OpenAI-compatible model server. The checked-in dev config uses `llama.cpp`
+on `:8080`.
 
 Main references:
 
@@ -75,7 +81,8 @@ Use `deploy/setup-jetson.sh` and the systemd units under `deploy/systemd/`.
 
 Typical production expectations:
 
-- `genie-llm.service` provides the local model server
+- `genie-ai-runtime.service` provides the default local model server
+- `genie-llm.service` is available as the legacy `llama.cpp` fallback
 - `genie-core.service` exposes the main runtime on `127.0.0.1:3000` by default
 - `genie-governor.service` and `genie-health.service` are active
 - `genie-api.service` serves dashboard/status
@@ -90,9 +97,9 @@ the safe default.
 Common commands:
 
 ```bash
-systemctl status genie-core genie-governor genie-health genie-api genie-llm
+systemctl status genie-core genie-governor genie-health genie-api genie-ai-runtime
 journalctl -u genie-core -n 200 --no-pager
-journalctl -u genie-llm -n 200 --no-pager
+journalctl -u genie-ai-runtime -n 200 --no-pager
 curl -s http://127.0.0.1:3000/api/health
 curl -s http://127.0.0.1:3000/api/tools
 genie-ctl status
@@ -197,7 +204,7 @@ These are current system realities, not bugs in the docs:
 
 Minimum checks after deployment:
 
-1. Verify `llama-server` health.
+1. Verify the configured LLM backend health, normally `genie-ai-runtime`.
 2. Verify `genie-core` health and tool list.
 3. Verify `genie-governor` socket and status.
 4. Verify `genie-api` dashboard/status responses.
@@ -210,7 +217,7 @@ Minimum checks after deployment:
 | Symptom | First Place To Check |
 | --- | --- |
 | Chat UI loads but no answers | `genie-core` logs and `/api/health` |
-| `llm: offline` | `genie-llm.service` and `llama-server` flags |
+| `llm: offline` | configured LLM unit (`genie-ai-runtime.service` by default, `genie-llm.service` for llama.cpp fallback) and `/api/health` backend details |
 | Wrong or missing Home Assistant behavior | Home Assistant service config, token resolution, `ha/` boundary logs |
 | Voice hears but does not answer | STT path, language selection, Piper path, audio device |
 | Governor appears offline | `/run/geniepod/governor.sock` and `genie-governor.service` |

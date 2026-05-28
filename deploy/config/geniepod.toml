@@ -28,7 +28,7 @@ port = 3000
 bind_host = "127.0.0.1"           # Safer default. Use "0.0.0.0" only behind a trusted gateway/firewall.
 ha_token = ""                     # Only needed when Home Assistant service is enabled below. Or set HA_TOKEN env var.
 llm_model_name = "qwen"           # For prompt optimization. Options: nemotron-4b, tinyllama, llama, qwen, phi
-                                  # alpha.9 default: Qwen3-4B Q4_K_M + genie-ai-runtime.
+                                  # Jetson default: Qwen3-4B Q4_K_M + genie-ai-runtime.
                                   # Phi-4-mini fallback (issue #44):
                                   #   1) deploy/setup-jetson.sh --model phi-4-mini
                                   #   2) flip the two lines below:
@@ -40,7 +40,7 @@ llm_model_name = "qwen"           # For prompt optimization. Options: nemotron-4
                                   #      fallback)
                                   #   4) sudo systemctl restart <active-llm-unit> genie-core
                                   # (see ARCHITECTURE.md "Current Transitional Adapters".)
-whisper_model = "/opt/geniepod/models/ggml-small.bin"   # alpha.5 default — with the
+whisper_model = "/opt/geniepod/models/ggml-small.bin"   # With the
                                   # long-running whisper-server (genie-whisper.service)
                                   # this model stays resident in iGPU memory, so per-call
                                   # STT is ~500 ms on Orin Nano (good for conversational
@@ -48,7 +48,7 @@ whisper_model = "/opt/geniepod/models/ggml-small.bin"   # alpha.5 default — wi
                                   # accuracy) for max responsiveness, or ggml-base.bin
                                   # (~200 ms) for a middle ground. Keep the genie-whisper
                                   # systemd unit's GENIEPOD_WHISPER_MODEL in sync.
-whisper_port = 8178               # alpha.5: long-running whisper-server via
+whisper_port = 8178               # Long-running whisper-server via
                                   # genie-whisper.service. Model stays in GPU memory
                                   # so per-utterance latency is ~50 ms instead of ~1.5 s
                                   # cold-start. Set to 0 to fall back to spawning
@@ -94,13 +94,13 @@ audio_sample_rate = 24000         # Match the AHUB's I2S2 Sample Rate (24 kHz on
                                   # ~1 s wall-clock). whisper-server resamples to
                                   # 16 kHz internally so STT is unaffected.
 audio_denoiser = "deepfilternet"  # Capture-side noise reduction backend. Options:
-                                  #   "deepfilternet" — neural denoiser (alpha.7, issue #12).
+                                  #   "deepfilternet" — neural denoiser.
                                   #                     Handles non-stationary noise
                                   #                     (fan cycling, typing, background
                                   #                     voices) without a noise profile.
                                   #                     Run setup-jetson.sh to fetch the
                                   #                     binary into deep_filter_path.
-                                  #   "sox"           — alpha.6 baseline; spectral
+                                  #   "sox"           — spectral
                                   #                     subtraction against a profile
                                   #                     captured in setup-jetson.sh,
                                   #                     plus compand quiet-speech lift.
@@ -121,7 +121,7 @@ post_tts_silence_ms = 1500        # Half-duplex gate (issue #15): ms to wait aft
                                   # transcribes the assistant's voice as the next "user"
                                   # utterance. Set to 0 on installs with full physical
                                   # isolation (headphones / headset).
-voice_enabled = true              # Voice mode on by default in alpha.5 (push-to-talk).
+voice_enabled = true              # Voice mode on by default (push-to-talk unless wakeword_script is set).
                                   # Set false on hosts without whisper/piper installed.
 voice_record_secs = 3             # Seconds to record per voice interaction. Most
                                   # household commands ("what time is it", "turn on
@@ -132,7 +132,7 @@ voice_continuous_secs = 3         # Shorter recording for follow-up conversation
 llm_model_path = "/opt/geniepod/models/Qwen3-4B-Q4_K_M.gguf"  # For GPU time-sharing in voice mode.
                                   # Phi-4-mini fallback (issue #44):
                                   # llm_model_path = "/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf"
-wakeword_script = ""              # Empty = push-to-talk (alpha.5 default).
+wakeword_script = ""              # Empty = push-to-talk.
                                   # Set to "/opt/geniepod/bin/genie-wake-listen.py" once
                                   # wake-word detection is validated for your install.
 

@@ -7,16 +7,22 @@ their runtime role.
 
 Source:
 
-- `crates/genie-core/src/llm/client.rs`
-- `crates/genie-core/src/llm/retry.rs`
 - `crates/genie-core/src/llm/mod.rs`
+- `crates/genie-core/src/llm/openai_compat.rs`
+- `crates/genie-core/src/llm/genie_ai_runtime.rs`
+- `crates/genie-core/src/llm/llama_cpp.rs`
+- `crates/genie-core/src/llm/openai_compatible.rs`
+- `crates/genie-core/src/llm/provider.rs`
 
 Responsibilities:
 
-- OpenAI-compatible HTTP calls to the configured local model server
+- OpenAI-compatible HTTP calls to the configured model server
+- Jetson-default `genie-ai-runtime` request shaping and hint metadata
+- legacy/development `llama.cpp` fallback support
+- optional OpenAI-compatible provider auth/readiness planning
 - health checking
 - request serialization and response parsing
-- retry and fallback behavior for selected request classes
+- bounded connect/read/request timeouts for blocking and streaming calls
 
 ## Prompt Builder And Reasoning Mode
 

@@ -17,7 +17,7 @@
 //! | Module | What it does |
 //! |--------|-------------|
 //! | [`agent_harness`] | Limited-context prompt/tool/memory/provider contract checks |
-//! | [`llm`] | OpenAI-compatible local LLM client (llama.cpp, Ollama, any API) |
+//! | [`llm`] | OpenAI-compatible LLM facade (`genie-ai-runtime`, llama.cpp, optional providers) |
 //! | [`ha`] | Home Assistant provider boundary, structure cache, and REST client |
 //! | [`tools`] | Compiled tool dispatch + parser for LLM JSON output |
 //! | [`memory`] | SQLite + FTS5 persistent memory with confidence decay |
@@ -33,7 +33,7 @@
 //! ## Design principles
 //!
 //! - **No HTTP framework** — raw tokio TcpListener (keeps binary small)
-//! - **No AI framework** — direct OpenAI API over TCP (no langchain, no autogen)
+//! - **No AI framework** — direct OpenAI-compatible HTTP clients (no langchain, no autogen)
 //! - **Bundled SQLite** — no external database dependency
 //! - **Single-threaded** — `tokio::main(flavor = "current_thread")`
 //! - **AGPL-3.0-only** — network-facing modifications must stay available to users

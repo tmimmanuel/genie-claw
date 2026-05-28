@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last reconciled against the repository code: 2026-05-07.
+Last reconciled against the repository code: 2026-05-28.
 
 This page is the source of truth for what is implemented in this repository
 versus what is architecture, transitional integration, or future ecosystem work.
@@ -42,7 +42,7 @@ Status labels:
 | Area | Status | What Exists | What Is Still Missing |
 | --- | --- | --- | --- |
 | Home Assistant integration | Partial / transitional | Provider boundary, status/control/history/undo, local action safety, HA token/config path | Home Assistant is not reimplemented in Rust here. Final device graph, automations, and deterministic physical safety belong in `genie-home-runtime`. |
-| LLM runtime | External / transitional | OpenAI-compatible client points at local `llama-server`; deploy units configure `llama.cpp` | Jetson-only optimized C++ runtime, CUDA kernels, memory planner, and model-serving replacement belong in `genie-ai-runtime`. |
+| LLM runtime | External / integrated | `crates/genie-core/src/llm/*`, `deploy/systemd/genie-ai-runtime.service`, `[services.llm].backend = "genie_ai_runtime"` | Jetson deploys default to the external `genie-ai-runtime` on `:8080`; `llama.cpp` remains a selectable fallback/development backend. |
 | Voice multilingual support | Partial | STT language hint/auto mode, language detection, and optional per-language Piper model selection | Full quality for Chinese, Spanish, German, etc. depends on installed Whisper/Piper models and device testing. It is not a certified full-language product yet. |
 | Speaker recognition | Partial | Local acoustic fingerprints from WAV profiles and runtime matching | Not robust biometric authentication, anti-spoofing, enrollment UX, or security-grade identity. |
 | ESP32-C6 connectivity | Partial boundary | Config, status endpoint, capability model, UART path validation, Thread/Matter capability intent | No real UART protocol controller, no Thread/Matter stack, no ESP-Hosted-NG implementation in this repo. ESP-Hosted-NG belongs in `genie-os`; protocol ownership belongs in `genie-home-runtime`/connectivity services. |
@@ -56,7 +56,7 @@ Status labels:
 | Area | Status | Correct Owner |
 | --- | --- | --- |
 | `genie-home-runtime` | Planned / separate repo | Rust AI-native home automation engine, device graph, automations, MCP server, deterministic final physical safety layer. |
-| `genie-ai-runtime` | Planned / separate repo | Jetson-only C++ inference runtime customized from `llama.cpp`, optimized CUDA kernels, and memory planner. |
+| `genie-ai-runtime` | External / separate repo | Jetson-only inference runtime, CUDA kernels, memory planner, and OpenAI-compatible serving surface. GenieClaw owns the client contract, not the runtime implementation. |
 | `genie-voice-runtime` | Initial / separate repo | External voice runtime for wake, VAD, STT, TTS, audio streaming, and voice session protocol. |
 | `genie-os` | Planned / separate repo | Custom L4T image, board bring-up, drivers, OTA base image, service supervision, ESP-Hosted-NG OS integration. |
 | Full Matter/Thread/Zigbee/BLE production stack | Planned outside this repo | Lower connectivity/home-runtime layers. |
@@ -67,12 +67,11 @@ Status labels:
 
 ## Current Alpha Truth
 
-The workspace version is currently `1.0.0-alpha.4`.
+The workspace version is currently `1.0.0-alpha.9`.
 
-The `Unreleased` changelog contains next-alpha work already implemented in the
-codebase, including safer localhost defaults, origin-aware first-party requests,
-and local speaker-profile management. Those features are present in source, but
-the crate version has not yet been bumped to a new alpha release.
+The current alpha line defaults Jetson deployments to `genie-ai-runtime`,
+preserves the 4096-token agent harness, and keeps optional remote/API providers
+behind explicit config, credential-env, and context-budget checks.
 
 ## How To Keep This Page Honest
 
