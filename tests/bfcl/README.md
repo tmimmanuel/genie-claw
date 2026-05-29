@@ -25,3 +25,12 @@ including home/device calls, memory read/write/diagnostic tools, timers,
 weather/search, calculations, media, no-tool responses, multi-tool responses,
 and OpenAI-compatible `tool_calls` output. Dynamic native skill tools are loaded
 at runtime, so each installed skill should add its own BFCL fixture.
+
+For local stress testing, put large generated suites under `tests/bfcl/local/`.
+That directory is gitignored on purpose. A useful local run shape is:
+
+```bash
+cargo run -p genie-ctl -- bfcl-score \
+  --cases tests/bfcl/local/long_home_tool_cases.jsonl \
+  --predictions tests/bfcl/local/long_home_tool_predictions.jsonl
+```
