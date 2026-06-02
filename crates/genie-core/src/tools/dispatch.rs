@@ -153,6 +153,73 @@ struct ActuationRateLimiter {
     attempts: Mutex<HashMap<RequestOrigin, VecDeque<u64>>>,
 }
 
+/// Per-tool sliding-window rate limiter for the dispatcher gate. Unlike
+/// [`ActuationRateLimiter`] (which buckets physical home actions by origin),
+/// this bounds *any* tool by name via `tool_policy.max_actions_per_minute_by_tool`
+/// so a fast loop (voice, skill, or LLM) bounces off the limit after N calls.
+#[derive(Debug, Default)]
+struct ToolRateLimiter {
+    attempts: Mutex<HashMap<String, VecDeque<u64>>>,
+}
+
+/// Two-step confirmation gate for sensitive tools (issue #22).
+///
+/// A tool listed in `tool_policy.requires_confirmation_tools` must be requested
+/// twice with the same `(origin, tool, arguments)` within a TTL window: the
+/// first leg (`confirmed = false`) records the request and returns a stable
+/// token asking the caller to repeat it; the confirming leg (`confirmed = true`)
+/// only executes when a matching first leg is still inside the window, otherwise
+/// it reports the confirmation as expired.
+#[derive(Debug, Default)]
+struct ToolConfirmationGate {
+    /// Map of `(origin, tool, args)` key -> first-seen epoch millis.
+    pending: Mutex<HashMap<String, u64>>,
+}
+
+/// Pending first legs are retained for an hour so a late confirming leg reports
+/// "expired" rather than silently restarting confirmation, while still bounding
+/// memory if a first leg is never followed up.
+const TOOL_CONFIRMATION_RETENTION_MS: u64 = 60 * 60 * 1000;
+
+/// Hard cap on tracked first legs; the oldest is evicted past this so a flood of
+/// distinct sensitive requests cannot grow the map without bound.
+const MAX_TOOL_CONFIRMATIONS: usize = 256;
+
+enum ToolConfirmDecision {
+    /// First leg recorded; caller must repeat the same request to proceed.
+    Pending { token: String },
+    /// A matching first leg is still inside the TTL window — proceed.
+    Confirmed,
+    /// The confirming leg arrived with no live first leg (never requested, or
+    /// the TTL window elapsed).
+    Expired,
+}
+
+/// How the gate resolved a tool call, recorded on every tool-audit line so the
+/// evidence trail distinguishes an execution from each refusal class.
+#[derive(Debug, Clone, Copy)]
+enum GateDecision {
+    Executed,
+    Error,
+    DeniedPolicy,
+    RateLimited,
+    PendingConfirmation,
+    ConfirmationExpired,
+}
+
+impl GateDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Executed => "executed",
+            Self::Error => "error",
+            Self::DeniedPolicy => "denied_policy",
+            Self::RateLimited => "rate_limited",
+            Self::PendingConfirmation => "pending_confirmation",
+            Self::ConfirmationExpired => "confirmation_expired",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ToolAuditEvent {
     ts_ms: u64,
@@ -160,6 +227,10 @@ struct ToolAuditEvent {
     action_class: ToolActionClass,
     origin: RequestOrigin,
     success: bool,
+    /// Which gate branch produced this line: `executed`, `error`,
+    /// `denied_policy`, `rate_limited`, `pending_confirmation`, or
+    /// `confirmation_expired`.
+    decision: &'static str,
     duration_ms: u64,
     argument_keys: Vec<String>,
     output_chars: usize,
@@ -571,11 +642,6 @@ impl ToolDispatcher {
             .await
     }
 
-    /// The single tool-call gate (issue #22). Every tool invocation — quick
-    /// router, LLM-driven dispatch, voice, and skill calls — flows through here,
-    /// so per-origin tool ACLs, per-tool rate limits, the two-call confirmation
-    /// flow, and the tool audit log are all enforced in one place with no
-    /// bypass. `execute` is a thin wrapper that uses the default internal origin.
     pub async fn execute_with_context(
         &self,
         call: &ToolCall,
@@ -583,65 +649,12 @@ impl ToolDispatcher {
     ) -> ToolResult {
         let started = Instant::now();
         let action_class = tool_action_class(&call.name);
-        if let Err(err) =
-            tool_origin_allowed(&self.tool_policy, exec_ctx.request_origin, &call.name)
-        {
-            let tool_result = ToolResult {
-                tool: call.name.clone(),
-                action_class,
-                success: false,
-                output: format!("Tool blocked by origin policy: {err}"),
-            };
-            self.audit_tool_call(call, exec_ctx, started, &tool_result);
-            return tool_result;
-        }
 
-        // Per-tool rate limit (issue #22): enforced at the gate for every origin
-        // and tool, independent of the per-origin home actuation limit. A tool
-        // with no configured limit is unaffected.
-        if self.tool_policy.enabled
-            && let Err(reason) = self
-                .tool_rate_limiter
-                .check_and_record(&self.tool_policy, &call.name)
-        {
-            let tool_result = ToolResult {
-                tool: call.name.clone(),
-                action_class,
-                success: false,
-                output: format!("Tool blocked by rate limit: {reason}"),
-            };
-            self.audit_tool_call(call, exec_ctx, started, &tool_result);
-            return tool_result;
-        }
-
-        // Two-call confirmation for configured sensitive tools (issue #22). The
-        // first call records a pending entry and returns without executing; an
-        // identical call (same origin + arguments) within the TTL clears it and
-        // proceeds. An explicit `confirmed` context (e.g. a dashboard confirm
-        // re-dispatch) skips the dance. `home_control` is exempt here because it
-        // runs its own richer risk-based confirmation below.
-        if self.tool_policy.enabled
-            && !exec_ctx.confirmed
-            && call.name != "home_control"
-            && tool_requires_confirmation(&self.tool_policy, &call.name)
-            && let ToolConfirm::Pending { token } = self.tool_confirmations.check(
-                exec_ctx.request_origin,
-                &call.name,
-                &call.arguments,
-                self.tool_policy.confirmation_ttl_secs,
-            )
-        {
-            let tool_result = ToolResult {
-                tool: call.name.clone(),
-                action_class,
-                success: true,
-                output: format!(
-                    "Confirmation required before running '{}'. Repeat the same request within {}s to confirm (pending {}).",
-                    call.name, self.tool_policy.confirmation_ttl_secs, token
-                ),
-            };
-            self.audit_tool_call(call, exec_ctx, started, &tool_result);
-            return tool_result;
+        // Single chokepoint: every tool call passes the gate (per-origin ACLs,
+        // two-step confirmation for sensitive tools, per-tool rate limits)
+        // before any tool body runs. Refusals are already audited.
+        if let Some(rejected) = self.run_gate(call, exec_ctx, started) {
+            return rejected;
         }
 
         let result = match call.name.as_str() {
@@ -678,17 +691,164 @@ impl ToolDispatcher {
             },
         };
 
-        self.audit_tool_call(call, exec_ctx, started, &tool_result);
+        let decision = if tool_result.success {
+            GateDecision::Executed
+        } else {
+            GateDecision::Error
+        };
+        self.audit_gate_decision(call, exec_ctx, started, &tool_result, decision);
 
         tool_result
     }
 
-    fn audit_tool_call(
+    /// Run the tool-call gate without dispatching: per-origin ACLs, two-step
+    /// confirmation for sensitive tools, then per-tool rate limits. Returns
+    /// `Some(rejection)` (already written to the tool-audit trail) when the gate
+    /// refuses, or `None` when the call may proceed. The caller audits the
+    /// eventual outcome of an allowed call.
+    fn run_gate(
+        &self,
+        call: &ToolCall,
+        exec_ctx: ToolExecutionContext,
+        started: Instant,
+    ) -> Option<ToolResult> {
+        let action_class = tool_action_class(&call.name);
+
+        // 1. Per-origin allow/deny ACLs (wildcards supported; deny wins).
+        if let Err(err) =
+            tool_origin_allowed(&self.tool_policy, exec_ctx.request_origin, &call.name)
+        {
+            let result = ToolResult {
+                tool: call.name.clone(),
+                action_class,
+                success: false,
+                output: format!("Tool blocked by origin policy: {err}"),
+            };
+            self.audit_gate_decision(call, exec_ctx, started, &result, GateDecision::DeniedPolicy);
+            return Some(result);
+        }
+
+        // 2. Two-step confirmation for configured sensitive tools. Skipped for
+        //    pre-confirmed re-entries of tools NOT in the list (e.g. the home
+        //    actuation confirm flow, which carries its own confirmation deeper).
+        if tool_requires_confirmation(&self.tool_policy, &call.name) {
+            let ttl_ms = self.tool_policy.confirmation_ttl_secs.saturating_mul(1000);
+            match self.tool_confirmations.evaluate(
+                exec_ctx.request_origin,
+                &call.name,
+                &call.arguments,
+                ttl_ms,
+                exec_ctx.confirmed,
+            ) {
+                ToolConfirmDecision::Pending { token } => {
+                    let result = ToolResult {
+                        tool: call.name.clone(),
+                        action_class,
+                        success: true,
+                        output: format!(
+                            "Confirmation required before I run '{}'. Re-issue the same request within {}s to proceed (confirmation token {}).",
+                            call.name, self.tool_policy.confirmation_ttl_secs, token
+                        ),
+                    };
+                    self.audit_gate_decision(
+                        call,
+                        exec_ctx,
+                        started,
+                        &result,
+                        GateDecision::PendingConfirmation,
+                    );
+                    return Some(result);
+                }
+                ToolConfirmDecision::Expired => {
+                    let result = ToolResult {
+                        tool: call.name.clone(),
+                        action_class,
+                        success: false,
+                        output: format!(
+                            "Confirmation for '{}' expired or was never requested; the {}s window elapsed. Request it again to restart confirmation.",
+                            call.name, self.tool_policy.confirmation_ttl_secs
+                        ),
+                    };
+                    self.audit_gate_decision(
+                        call,
+                        exec_ctx,
+                        started,
+                        &result,
+                        GateDecision::ConfirmationExpired,
+                    );
+                    return Some(result);
+                }
+                ToolConfirmDecision::Confirmed => {}
+            }
+        }
+
+        // 3. Per-tool sliding-window rate limit. Pre-confirmed re-entries skip
+        //    the recharge: the slot was already paid by the first leg.
+        if !exec_ctx.confirmed
+            && let Err(err) = self
+                .tool_rate_limiter
+                .check_and_record(&self.tool_policy, &call.name)
+        {
+            let result = ToolResult {
+                tool: call.name.clone(),
+                action_class,
+                success: false,
+                output: format!("Tool blocked by rate limit: {err}"),
+            };
+            self.audit_gate_decision(call, exec_ctx, started, &result, GateDecision::RateLimited);
+            return Some(result);
+        }
+
+        None
+    }
+
+    /// Public chokepoint entry for specialized fast-paths (e.g. the voice
+    /// `web_search` renderer) that need the gate's ACL / confirmation /
+    /// rate-limit decision and audit trail but render their own output.
+    ///
+    /// Returns `Some(rejection)` (already audited) when the gate refuses, or
+    /// `None` when the call may proceed — in which case the caller MUST record
+    /// the eventual outcome with [`ToolDispatcher::audit_gated_tool`] so the
+    /// single chokepoint still produces exactly one audit line per call.
+    pub fn gate_tool_call(
+        &self,
+        call: &ToolCall,
+        exec_ctx: ToolExecutionContext,
+    ) -> Option<ToolResult> {
+        self.run_gate(call, exec_ctx, Instant::now())
+    }
+
+    /// Record one tool-audit line for a call that passed [`gate_tool_call`] and
+    /// was executed by a specialized fast-path.
+    pub fn audit_gated_tool(
+        &self,
+        call: &ToolCall,
+        exec_ctx: ToolExecutionContext,
+        started: Instant,
+        success: bool,
+        output: &str,
+    ) {
+        let result = ToolResult {
+            tool: call.name.clone(),
+            action_class: tool_action_class(&call.name),
+            success,
+            output: output.to_string(),
+        };
+        let decision = if success {
+            GateDecision::Executed
+        } else {
+            GateDecision::Error
+        };
+        self.audit_gate_decision(call, exec_ctx, started, &result, decision);
+    }
+
+    fn audit_gate_decision(
         &self,
         call: &ToolCall,
         exec_ctx: ToolExecutionContext,
         started: Instant,
         result: &ToolResult,
+        decision: GateDecision,
     ) {
         self.tool_audit_logger.append_or_log(ToolAuditEvent {
             ts_ms: now_ms(),
@@ -696,6 +856,7 @@ impl ToolDispatcher {
             action_class: result.action_class,
             origin: exec_ctx.request_origin,
             success: result.success,
+            decision: decision.as_str(),
             duration_ms: started.elapsed().as_millis() as u64,
             argument_keys: tool_argument_keys(&call.arguments),
             output_chars: result.output.chars().count(),
@@ -1466,24 +1627,15 @@ fn actuation_rate_limit(config: &ActuationSafetyConfig, origin: RequestOrigin) -
         .unwrap_or(config.max_actions_per_minute)
 }
 
-/// Per-tool sliding-window rate limiter (issue #22). Independent of the
-/// per-origin actuation limiter; keyed by tool name across all origins and
-/// applied at the dispatch gate before any tool runs.
-#[derive(Debug, Default)]
-struct ToolRateLimiter {
-    attempts: Mutex<HashMap<String, VecDeque<u64>>>,
-}
-
 impl ToolRateLimiter {
-    /// Record a call and return `Err` if this tool's per-minute cap is
-    /// exceeded. A tool with no configured limit is always `Ok`.
-    fn check_and_record(&self, policy: &ToolPolicyConfig, tool: &str) -> Result<(), String> {
+    fn check_and_record(&self, policy: &ToolPolicyConfig, tool: &str) -> Result<()> {
         let Some(limit) = tool_rate_limit(policy, tool) else {
             return Ok(());
         };
         if limit == 0 {
-            return Err(format!("'{tool}' is limited to zero calls per minute"));
+            anyhow::bail!("tool '{}' is rate-limited to zero calls per minute", tool);
         }
+
         let now = now_ms();
         let cutoff = now.saturating_sub(ACTUATION_RATE_WINDOW_MS);
         let mut attempts = self.attempts.lock().expect("tool rate limiter lock");
@@ -1492,80 +1644,99 @@ impl ToolRateLimiter {
             bucket.pop_front();
         }
         if bucket.len() >= limit {
-            return Err(format!("'{tool}' exceeded {limit} call(s) per minute"));
+            anyhow::bail!("tool '{}' exceeded {} call(s) per minute", tool, limit);
         }
         bucket.push_back(now);
         Ok(())
     }
 }
 
+/// Per-tool limit for `tool`, honoring an exact match first and a `"*"`
+/// catch-all fallback. `None` means the tool is unlimited.
 fn tool_rate_limit(policy: &ToolPolicyConfig, tool: &str) -> Option<usize> {
+    if !policy.enabled {
+        return None;
+    }
     policy
         .max_actions_per_minute_by_tool
-        .iter()
-        .find(|(key, _)| key.trim().eq_ignore_ascii_case(tool))
-        .map(|(_, limit)| *limit)
-}
-
-fn tool_requires_confirmation(policy: &ToolPolicyConfig, tool: &str) -> bool {
-    policy
-        .requires_confirmation_tools
-        .iter()
-        .any(|name| name.trim().eq_ignore_ascii_case(tool))
-}
-
-/// Outcome of the two-call tool confirmation gate (issue #22).
-enum ToolConfirm {
-    /// A matching un-expired pending entry was found and consumed — proceed.
-    Confirmed,
-    /// No pending entry existed; one was recorded. Caller must repeat the same
-    /// request within the TTL to confirm.
-    Pending { token: String },
-}
-
-/// Tracks pending two-call confirmations keyed by origin + tool + arguments,
-/// each with an expiry. In-memory and process-local, matching the existing
-/// home `ConfirmationManager`.
-#[derive(Debug, Default)]
-struct ToolConfirmationGate {
-    pending: Mutex<HashMap<String, u64>>,
+        .get(tool)
+        .or_else(|| policy.max_actions_per_minute_by_tool.get("*"))
+        .copied()
 }
 
 impl ToolConfirmationGate {
-    fn check(
+    fn evaluate(
         &self,
         origin: RequestOrigin,
         tool: &str,
         args: &serde_json::Value,
-        ttl_secs: u64,
-    ) -> ToolConfirm {
+        ttl_ms: u64,
+        confirmed: bool,
+    ) -> ToolConfirmDecision {
         let key = tool_confirmation_key(origin, tool, args);
         let now = now_ms();
-        let mut pending = self.pending.lock().expect("tool confirmation lock");
-        pending.retain(|_, expiry| *expiry > now);
-        if pending.remove(&key).is_some() {
-            ToolConfirm::Confirmed
-        } else {
-            pending.insert(
-                key.clone(),
-                now.saturating_add(ttl_secs.saturating_mul(1000)),
-            );
-            ToolConfirm::Pending {
-                token: format!("confirm-{}", &key[..key.len().min(12)]),
+        let mut pending = self.pending.lock().expect("tool confirmation gate lock");
+        pending.retain(|_, first_seen| {
+            now.saturating_sub(*first_seen) < TOOL_CONFIRMATION_RETENTION_MS
+        });
+
+        if !confirmed {
+            // First leg: record (or refresh) the request and ask for a repeat.
+            if pending.len() >= MAX_TOOL_CONFIRMATIONS
+                && !pending.contains_key(&key)
+                && let Some(oldest) = pending
+                    .iter()
+                    .min_by_key(|(_, first_seen)| **first_seen)
+                    .map(|(oldest_key, _)| oldest_key.clone())
+            {
+                pending.remove(&oldest);
             }
+            pending.insert(key.clone(), now);
+            return ToolConfirmDecision::Pending {
+                token: tool_confirmation_token(&key),
+            };
+        }
+
+        // Confirming leg: succeed only when a matching first leg is still inside
+        // the TTL window. A missing or stale first leg reports as expired.
+        match pending.remove(&key) {
+            Some(first_seen) if now.saturating_sub(first_seen) <= ttl_ms => {
+                ToolConfirmDecision::Confirmed
+            }
+            _ => ToolConfirmDecision::Expired,
         }
     }
 }
 
-/// Stable key for a pending confirmation: the same origin + tool + arguments
-/// always hash identically, so a repeated request clears the pending entry.
+/// Whether `tool` is in `requires_confirmation_tools` (wildcards supported).
+/// Only consulted when the tool policy is enabled.
+fn tool_requires_confirmation(policy: &ToolPolicyConfig, tool: &str) -> bool {
+    policy.enabled
+        && policy
+            .requires_confirmation_tools
+            .iter()
+            .any(|entry| entry == "*" || entry.trim().eq_ignore_ascii_case(tool))
+}
+
+/// Stable key for a confirmable request: identical `(origin, tool, arguments)`
+/// triples map to the same key so the confirming leg matches its first leg.
 fn tool_confirmation_key(origin: RequestOrigin, tool: &str, args: &serde_json::Value) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        origin.as_policy_key(),
+        tool,
+        serde_json::to_string(args).unwrap_or_default()
+    )
+}
+
+/// Stable, non-secret token derived from the confirmation key. It only
+/// identifies the pending request (the args themselves are the authorization),
+/// so unlike a home-actuation token it is safe to surface to the caller.
+fn tool_confirmation_token(key: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    origin.as_policy_key().hash(&mut hasher);
-    tool.hash(&mut hasher);
-    args.to_string().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    key.hash(&mut hasher);
+    format!("conf-{:016x}", hasher.finish())
 }
 
 fn memory_query(args: &serde_json::Value) -> &str {
@@ -2184,151 +2355,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gate_per_tool_rate_limit_blocks_after_limit() {
-        // Issue #22: a per-tool cap applies at the gate for any origin/tool,
-        // independent of the per-origin home actuation limiter.
-        let mut policy = ToolPolicyConfig::default();
-        policy
-            .max_actions_per_minute_by_tool
-            .insert("get_time".into(), 2);
-        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
-        let call = ToolCall {
-            name: "get_time".into(),
-            arguments: serde_json::json!({}),
-        };
-
-        assert!(dispatcher.execute(&call).await.success);
-        assert!(dispatcher.execute(&call).await.success);
-        let blocked = dispatcher.execute(&call).await;
-        assert!(!blocked.success, "third call must bounce off the limit");
-        assert!(blocked.output.contains("rate limit"));
-    }
-
-    #[tokio::test]
-    async fn gate_confirmation_pends_then_executes_on_repeat() {
-        // Issue #22: a confirmation-required tool returns pending on the first
-        // call and executes on an identical repeat within the TTL.
-        let policy = ToolPolicyConfig {
-            requires_confirmation_tools: vec!["get_time".into()],
-            ..Default::default()
-        };
-        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
-        let call = ToolCall {
-            name: "get_time".into(),
-            arguments: serde_json::json!({}),
-        };
-
-        let first = dispatcher.execute(&call).await;
-        assert!(
-            first.output.contains("Confirmation required"),
-            "first call must request confirmation, got: {}",
-            first.output
-        );
-        let second = dispatcher.execute(&call).await;
-        assert!(
-            second.success && !second.output.contains("Confirmation required"),
-            "identical repeat within the TTL must execute, got: {}",
-            second.output
-        );
-    }
-
-    #[tokio::test]
-    async fn gate_expired_confirmation_never_executes() {
-        // Issue #22: an expired pending confirmation must re-pend, not execute.
-        // ttl=0 makes every pending expire immediately, so repeats keep pending.
-        let policy = ToolPolicyConfig {
-            requires_confirmation_tools: vec!["get_time".into()],
-            confirmation_ttl_secs: 0,
-            ..Default::default()
-        };
-        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
-        let call = ToolCall {
-            name: "get_time".into(),
-            arguments: serde_json::json!({}),
-        };
-
-        assert!(
-            dispatcher
-                .execute(&call)
-                .await
-                .output
-                .contains("Confirmation required")
-        );
-        assert!(
-            dispatcher
-                .execute(&call)
-                .await
-                .output
-                .contains("Confirmation required"),
-            "an expired confirmation must re-pend, not execute"
-        );
-    }
-
-    #[tokio::test]
-    async fn gate_explicit_confirmed_context_skips_confirmation() {
-        // Issue #22: an already-confirmed context (e.g. a dashboard confirm
-        // re-dispatch) bypasses the two-call dance and executes immediately.
-        let policy = ToolPolicyConfig {
-            requires_confirmation_tools: vec!["get_time".into()],
-            ..Default::default()
-        };
-        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
-
-        let result = dispatcher
-            .execute_with_context(
-                &ToolCall {
-                    name: "get_time".into(),
-                    arguments: serde_json::json!({}),
-                },
-                ToolExecutionContext {
-                    confirmed: true,
-                    ..ToolExecutionContext::default()
-                },
-            )
-            .await;
-        assert!(result.success);
-        assert!(!result.output.contains("Confirmation required"));
-    }
-
-    #[tokio::test]
-    async fn gate_audits_rate_limited_decision() {
-        // Issue #22: every gate decision is written to the tool audit log,
-        // including a rate-limit block — it is not silently dropped.
-        let dir = std::env::temp_dir().join(format!("genie-gate-audit-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let audit_path = dir.join("tool-audit.jsonl");
-        let _ = std::fs::remove_file(&audit_path);
-
-        let mut policy = ToolPolicyConfig::default();
-        policy
-            .max_actions_per_minute_by_tool
-            .insert("get_time".into(), 1);
-        let dispatcher = ToolDispatcher::new(None)
-            .with_tool_policy_config(policy)
-            .with_tool_audit_path(audit_path.clone());
-        let call = ToolCall {
-            name: "get_time".into(),
-            arguments: serde_json::json!({}),
-        };
-
-        assert!(dispatcher.execute(&call).await.success);
-        let blocked = dispatcher.execute(&call).await;
-        assert!(!blocked.success);
-
-        let log = std::fs::read_to_string(&audit_path).unwrap_or_default();
-        assert_eq!(
-            log.lines().count(),
-            2,
-            "both the allowed and the rate-limited call must be audited"
-        );
-        assert!(
-            log.contains("\"success\":false"),
-            "the blocked decision must appear in the audit log"
-        );
-        let _ = std::fs::remove_file(&audit_path);
-    }
-
-    #[tokio::test]
     async fn tool_policy_allowlist_blocks_unspecified_tool() {
         let mut policy = ToolPolicyConfig::default();
         policy
@@ -2450,6 +2476,7 @@ mod tests {
             action_class: ToolActionClass::ReadOnly,
             origin: RequestOrigin::Api,
             success: true,
+            decision: "executed",
             duration_ms: 1,
             argument_keys: vec!["expression".into()],
             output_chars: 3,
@@ -2473,6 +2500,7 @@ mod tests {
             action_class: ToolActionClass::ReadOnly,
             origin: RequestOrigin::Api,
             success: true,
+            decision: "executed",
             duration_ms: 1,
             argument_keys: vec!["expression".into()],
             output_chars: 3,
