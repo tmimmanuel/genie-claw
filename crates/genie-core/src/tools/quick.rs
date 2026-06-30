@@ -7,7 +7,9 @@
 use super::ToolCall;
 
 pub fn route(text: &str) -> Option<ToolCall> {
-    let normalized = strip_household_speaker_prefix(&normalize(text));
+    let prenormalized = normalize(text);
+    let speaker = household_speaker(&prenormalized);
+    let normalized = strip_household_speaker_prefix(&prenormalized);
     if normalized.is_empty() {
         return None;
     }
@@ -113,6 +115,10 @@ pub fn route(text: &str) -> Option<ToolCall> {
         return Some(tool("home_status", serde_json::json!({ "entity": entity })));
     }
 
+    if let Some(query) = memory_forget_query(&normalized) {
+        return Some(tool("memory_forget", serde_json::json!({ "query": query })));
+    }
+
     if let Some(query) = memory_recall_query(&normalized) {
         return Some(tool(
             "memory_recall",
@@ -147,6 +153,7 @@ pub fn route(text: &str) -> Option<ToolCall> {
     }
 
     if let Some(query) = play_media_request(&normalized) {
+        let query = resolve_speaker_possessive(&query, speaker);
         return Some(tool("play_media", serde_json::json!({ "query": query })));
     }
 
@@ -231,6 +238,38 @@ fn strip_household_speaker_prefix(text: &str) -> String {
     text.to_string()
 }
 
+/// The capitalized household speaker named in a `"<Name>: …"` prefix — e.g.
+/// `normalize("Mia: Play my playlist")` → `Some("Mia")`. Recognizes the same
+/// names as `strip_household_speaker_prefix`.
+fn household_speaker(text: &str) -> Option<&'static str> {
+    for (lower, name) in [
+        ("jared", "Jared"),
+        ("sarah", "Sarah"),
+        ("leo", "Leo"),
+        ("mia", "Mia"),
+    ] {
+        if text
+            .strip_prefix(lower)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .is_some_and(|rest| !rest.trim().is_empty())
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Resolve a leading possessive `"my "` against the known speaker, so a media
+/// query like `"my study playlist"` spoken by `"Mia: …"` becomes
+/// `"Mia study playlist"` (#532). With no speaker the query is unchanged, so
+/// speaker-less requests like `"Play my playlist"` keep the literal possessive.
+fn resolve_speaker_possessive(query: &str, speaker: Option<&str>) -> String {
+    match (speaker, query.strip_prefix("my ")) {
+        (Some(name), Some(rest)) => format!("{name} {rest}"),
+        _ => query.to_string(),
+    }
+}
+
 fn asks_memory_status(text: &str) -> bool {
     contains_any(
         text,
@@ -306,6 +345,45 @@ fn memory_recall_query(text: &str) -> Option<String> {
             | "what do you remember about us"
     ) {
         return Some("me".into());
+    }
+
+    None
+}
+
+/// Explicit "forget"/"delete" memory commands (#527). The quick router had no
+/// `memory_forget` path, so "Forget my old locker combination." abstained and
+/// the BFCL `memory-forget-old-combo` case (expected
+/// `memory_forget{query:"old locker combination"}`) produced no tool call.
+///
+/// Mirrors [`memory_recall_query`]: strip a leading forget verb (and an optional
+/// possessive/article) and return the remainder as `query`. Conservative by
+/// design — `delete` is matched only in an explicit note/memory context so that
+/// device, timer, and list deletions ("delete the alarm") keep their own routes,
+/// and a bare "forget it"/"forget that" abstains for the LLM.
+fn memory_forget_query(text: &str) -> Option<String> {
+    // Prefixes are longest-first; the first match wins so that, e.g.,
+    // "forget about it" resolves on "forget about " (a bare-pronoun remainder ->
+    // abstain) rather than falling through to "forget " and yielding "about it".
+    for prefix in [
+        "forget about my ",
+        "forget about the ",
+        "forget about ",
+        "forget my ",
+        "forget the ",
+        "forget ",
+        "delete what you know about ",
+        "delete everything you know about ",
+        "delete my note about ",
+        "delete the note about ",
+        "delete my note on ",
+        "delete the note on ",
+    ] {
+        if let Some(query) = text.strip_prefix(prefix).map(str::trim) {
+            if query.is_empty() || matches!(query, "that" | "it" | "this") {
+                return None;
+            }
+            return Some(query.to_string());
+        }
     }
 
     None
@@ -1921,17 +1999,20 @@ fn asks_home_assistant_status(text: &str) -> bool {
 }
 
 fn asks_system_status(text: &str) -> bool {
-    matches!(
-        text,
-        "system status"
-            | "geniepod status"
-            | "genie status"
-            | "status of geniepod"
-            | "status of genie"
-            | "uptime"
-            | "load average"
-            | "governor status"
-    )
+    // "How is the Jetson memory pressure?" / "check memory pressure" (#526) — a
+    // system-resource question; matched by phrase since the framing varies.
+    text.contains("memory pressure")
+        || matches!(
+            text,
+            "system status"
+                | "geniepod status"
+                | "genie status"
+                | "status of geniepod"
+                | "status of genie"
+                | "uptime"
+                | "load average"
+                | "governor status"
+        )
 }
 
 /// Home-status queries currently shadowed by broad `memory_recall` matchers.
@@ -2790,9 +2871,52 @@ mod tests {
     }
 
     #[test]
+    fn routes_memory_pressure_to_system_info() {
+        // BFCL system-info-jetson-memory: "How is the Jetson memory pressure?" (#526)
+        let call = route("Jared: How is the Jetson memory pressure?").unwrap();
+        assert_eq!(call.name, "system_info");
+
+        let call = route("check memory pressure").unwrap();
+        assert_eq!(call.name, "system_info");
+    }
+
+    #[test]
     fn routes_memory_health_to_memory_status() {
         let call = route("check memory health").unwrap();
         assert_eq!(call.name, "memory_status");
+    }
+
+    #[test]
+    fn routes_forget_command_to_memory_forget() {
+        // BFCL memory-forget-old-combo: "Forget my old locker combination." (#527)
+        let call = route("Forget my old locker combination.").unwrap();
+        assert_eq!(call.name, "memory_forget");
+        assert_eq!(
+            call.arguments,
+            serde_json::json!({ "query": "old locker combination" })
+        );
+
+        // Strips the forget verb and an optional possessive/article.
+        for (utterance, query) in [
+            ("forget my age", "age"),
+            ("forget the wifi password", "wifi password"),
+            ("forget about my dentist appointment", "dentist appointment"),
+            ("Sarah: forget my gym schedule", "gym schedule"),
+            ("delete the note about the spare key", "the spare key"),
+            ("delete what you know about my car", "my car"),
+        ] {
+            let call = route(utterance).unwrap_or_else(|| panic!("{utterance} should route"));
+            assert_eq!(call.name, "memory_forget", "{utterance}");
+            assert_eq!(call.arguments["query"], query, "{utterance}");
+        }
+    }
+
+    #[test]
+    fn forget_without_referent_abstains_for_llm() {
+        // Bare pronoun forgets carry no query — leave them for the LLM.
+        for utterance in ["forget it", "forget that", "forget about it", "delete that"] {
+            assert!(route(utterance).is_none(), "{utterance} should abstain");
+        }
     }
 
     #[test]
@@ -3349,6 +3473,18 @@ mod tests {
         assert_eq!(call.name, "home_control");
         assert_eq!(call.arguments["entity"], "all off");
         assert_eq!(call.arguments["action"], "activate");
+    }
+
+    #[test]
+    fn resolves_speaker_possessive_in_media_query() {
+        // BFCL play-media-study: "Mia: Play my study playlist." -> "Mia study playlist" (#532).
+        let call = route("Mia: Play my study playlist.").unwrap();
+        assert_eq!(call.name, "play_media");
+        assert_eq!(call.arguments["query"], "Mia study playlist");
+
+        // No speaker prefix -> the literal possessive is preserved (unchanged).
+        let call = route("Play my Morning Boost playlist").unwrap();
+        assert_eq!(call.arguments["query"], "my morning boost playlist");
     }
 
     #[test]
