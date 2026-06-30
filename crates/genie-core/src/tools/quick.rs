@@ -124,11 +124,12 @@ pub fn route(text: &str) -> Option<ToolCall> {
         return Some(tool("system_info", serde_json::json!({})));
     }
 
-    if let Some(query) = web_search_request(&normalized) {
-        return Some(tool(
-            "web_search",
-            serde_json::json!({ "query": query, "limit": 3 }),
-        ));
+    if let Some((query, fresh)) = web_search_request(&normalized) {
+        let mut args = serde_json::json!({ "query": query, "limit": 3 });
+        if fresh {
+            args["fresh"] = serde_json::json!(true);
+        }
+        return Some(tool("web_search", args));
     }
 
     if let Some((seconds, label)) = timer_request(&normalized) {
@@ -2499,7 +2500,7 @@ fn weather_request(text: &str) -> Option<(String, bool)> {
     Some((location, forecast))
 }
 
-fn web_search_request(text: &str) -> Option<String> {
+fn web_search_request(text: &str) -> Option<(String, bool)> {
     if text.starts_with("search memory ") || text.starts_with("search memories ") {
         return None;
     }
@@ -2519,11 +2520,11 @@ fn web_search_request(text: &str) -> Option<String> {
         } else {
             format!("{subject} stock price")
         };
-        return Some(query);
+        return Some((query, web_search_is_fresh_request(text)));
     }
 
     if matches!(text, "read the news" | "read news" | "what s the news") {
-        return Some("top news headlines".into());
+        return Some(("top news headlines".into(), false));
     }
 
     for prefix in [
@@ -2538,12 +2539,29 @@ fn web_search_request(text: &str) -> Option<String> {
         if let Some(query) = text.strip_prefix(prefix) {
             let query = query.trim();
             if !query.is_empty() {
-                return Some(query.to_string());
+                return Some((query.to_string(), web_search_is_fresh_request(text)));
             }
         }
     }
 
     None
+}
+
+fn web_search_is_fresh_request(text: &str) -> bool {
+    contains_any(
+        text,
+        &[
+            " current ",
+            " now ",
+            " today ",
+            " latest ",
+            " stock price of ",
+            " stock price for ",
+            " stock price ",
+            " the current",
+            " current ",
+        ],
+    )
 }
 
 fn extract_location_after_marker(text: &str, marker: &str) -> Option<String> {
@@ -4212,6 +4230,11 @@ mod tests {
         let call = route("What is the stock price of Apple?").unwrap();
         assert_eq!(call.name, "web_search");
         assert!(call.arguments["query"].as_str().unwrap().contains("apple"));
+        assert_eq!(call.arguments["fresh"], true);
+
+        let call = route("What is the current stock price of Apple?").unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["fresh"], true);
     }
 
     #[test]
