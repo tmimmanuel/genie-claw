@@ -3683,6 +3683,12 @@ mod tests {
         assert_eq!(call.arguments["action"], "set_temperature");
         assert_eq!(call.arguments["value"], 72);
 
+        let call = route("Set the living room thermostat to 72.").unwrap();
+        assert_eq!(call.name, "home_control");
+        assert_eq!(call.arguments["entity"], "living room thermostat");
+        assert_eq!(call.arguments["action"], "set_temperature");
+        assert_eq!(call.arguments["value"], 72);
+
         let call = route("Is the garage door closed?").unwrap();
         assert_eq!(call.name, "home_status");
         assert_eq!(call.arguments["entity"], "garage door");
